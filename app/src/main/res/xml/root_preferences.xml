@@ -1,0 +1,40 @@
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <SwitchPreferenceCompat
+        app:key="is_wireless_client"
+        app:title="Use this device as wireless client" />
+
+    <SwitchPreferenceCompat
+        app:key="is_gateway"
+        app:title="Use this device as gateway" />
+
+    <PreferenceCategory app:title="Wireless device settings" app:dependency="is_wireless_client">
+        <EditTextPreference
+            app:key="gateway_wifi_ssid"
+            app:title="Gateway Wifi SSID"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="gateway_wifi_bssid"
+            app:title="Gateway Wifi BSSID"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:key="gateway_wifi_password"
+            app:title="Gateway Wifi password" />
+
+        <EditTextPreference
+            app:key="gateway_bt_mac"
+            app:title="Gateway Bluetooth MAC Address"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Gateway device settings" app:dependency="is_gateway">
+        <EditTextPreference
+            app:key="client_bt_mac"
+            app:title="Client Bluetooth MAC Address"
+            app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+</PreferenceScreen>
