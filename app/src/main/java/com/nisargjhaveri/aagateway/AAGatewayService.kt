@@ -214,9 +214,7 @@ class AAGatewayService : Service() {
             var socket: Socket? = null
 
             try {
-                var serverSocket: ServerSocket? = null
-
-                serverSocket = ServerSocket(5288, 5)
+                val serverSocket = ServerSocket(5288, 5)
                 serverSocket.soTimeout = 60000
                 serverSocket.reuseAddress = true
 
