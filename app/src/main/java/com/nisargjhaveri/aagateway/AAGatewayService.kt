@@ -24,6 +24,8 @@ class AAGatewayService : Service() {
         private const val NOTIFICATION_ID = 1
     }
 
+    private var mLogCommunication = false
+
     private var mRunning = false
 
     private var mAccessory: UsbAccessory? = null
@@ -152,20 +154,16 @@ class AAGatewayService : Service() {
 
             val buffer = ByteArray(16384)
 
-            val phoneInputStream = mPhoneInputStream!!
-            val phoneOutputStream = mPhoneOutputStream!!
-
-            try {
-                val len = phoneInputStream.read(buffer)
-                Log.v(LOG_TAG, "USB read: ${buffer.toHex().substring(0, len*2)}")
-
-                phoneOutputStream.write(byteArrayOf(0, 3, 0, 8, 0, 2, 0, 1, 0, 4, 0, 0))
-                Log.v(LOG_TAG, "USB initial write: ${byteArrayOf(0, 3, 0, 8, 0, 2, 0, 1, 0, 4, 0, 0).toHex()}")
-                mUsbComplete = true
-            } catch (e: Exception) {
-                e.printStackTrace()
+            if (mPhoneInputStream == null || mPhoneOutputStream == null) {
                 mRunning = false
                 stopService("Error initializing USB")
+                return
+            }
+
+            val phoneInputStream = mPhoneInputStream!!
+
+            if (mRunning) {
+                mUsbComplete = true
             }
 
             if (!mLocalComplete && mRunning) {
@@ -186,7 +184,7 @@ class AAGatewayService : Service() {
                     val len = phoneInputStream.read(buffer)
                     mSocketOutputStream?.write(buffer.copyOf(len))
 
-                    Log.v(LOG_TAG, "USB read: ${buffer.toHex().substring(0, len*2)}")
+                    if (mLogCommunication) Log.v(LOG_TAG, "USB read: ${buffer.toHex().substring(0, len*2)}")
                 }
                 catch (e: Exception)
                 {
@@ -213,16 +211,27 @@ class AAGatewayService : Service() {
         override fun run() {
             super.run()
 
-            var serverSocket: ServerSocket? = null
             var socket: Socket? = null
 
             try {
+                var serverSocket: ServerSocket? = null
+
                 serverSocket = ServerSocket(5288, 5)
-                serverSocket.soTimeout = 30000
+                serverSocket.soTimeout = 60000
                 serverSocket.reuseAddress = true
 
                 socket = serverSocket.accept()
                 socket.soTimeout = 10000
+
+                try {
+                    serverSocket.close()
+                }
+                catch (e: IOException) {
+                    // Ignore
+                }
+
+                mSocketOutputStream = socket?.getOutputStream()
+                mSocketInputStream = DataInputStream(socket?.getInputStream())
 
                 updateNotification("Connected!")
             }
@@ -230,31 +239,14 @@ class AAGatewayService : Service() {
                 mRunning = false
                 stopService("Wireless client did not connect")
             }
-
-            try {
-                if (mRunning) {
-                    mSocketOutputStream = socket?.getOutputStream()
-                    mSocketInputStream = DataInputStream(socket?.getInputStream())
-
-                    mSocketOutputStream?.also {
-                        it.write(byteArrayOf(0, 3, 0, 6, 0, 1, 0, 1, 0, 2))
-                        Log.v(LOG_TAG, "TCP initial write: ${byteArrayOf(0, 3, 0, 6, 0, 1, 0, 1, 0, 2).toHex()}")
-                        it.flush()
-                    }
-
-                    val buf = ByteArray(12)
-                    mSocketInputStream?.read(buf)
-                    Log.v(LOG_TAG, "TCP read: ${buf.toHex()}")
-
-//                    Log.d(TAG, "tcp - recv from phone " + bytesToHex(recv))
-                    mLocalComplete = true
-                }
-            }
-            catch (e: Exception) {
+            catch (e: IOException) {
                 e.printStackTrace()
-                // Log.e(TAG, "tcp - error opening phone " + e.getMessage());
                 mRunning = false
                 stopService("Error initializing TCP")
+            }
+
+            if (mRunning) {
+                mLocalComplete = true
             }
 
             if (!mUsbComplete && mRunning) {
@@ -275,7 +267,7 @@ class AAGatewayService : Service() {
                     var pos = 4
 
                     mSocketInputStream?.readFully(buffer, 0, 4)
-                    if (buffer[1].toInt() == 9) //Flag 9 means the header is 8 bytes long (read it in a separately)
+                    if (buffer[1].toInt() == 9) //Flag 9 means the header is 8 bytes long (read four more bytes separately)
                     {
                         pos += 4
                         mSocketInputStream?.readFully(buffer, 4, 4)
@@ -285,19 +277,12 @@ class AAGatewayService : Service() {
 
                     mSocketInputStream?.readFully(buffer, pos, encLen)
                     mPhoneOutputStream?.write(buffer.copyOf(encLen + pos))
-                    Log.v(LOG_TAG, "TCP read: ${buffer.copyOf(encLen + pos).toHex()}")
+
+                    if (mLogCommunication) Log.v(LOG_TAG, "TCP read: ${buffer.copyOf(encLen + pos).toHex()}")
                 } catch (e: java.lang.Exception) {
                     //Log.e(TAG, "tcp - in main loop " + e.message)
                     mRunning = false
                     stopService("Error in TCP main loop")
-                }
-            }
-
-            if (serverSocket != null) {
-                try {
-                    serverSocket.close()
-                } catch (e: IOException) {
-                    e.printStackTrace()
                 }
             }
 
