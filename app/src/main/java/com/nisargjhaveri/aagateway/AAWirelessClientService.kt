@@ -120,20 +120,21 @@ class AAWirelessClientService : Service() {
     }
 
     private fun connectAAWireless(address: String, network: Network?, wifiInfo: WifiInfo?) {
-        val CLASS_NAME_ANDROID_AUTO_WIRELESS = "com.google.android.apps.auto.wireless.setup.service.impl.WirelessStartupActivity"
         val PACKAGE_NAME_ANDROID_AUTO_WIRELESS = "com.google.android.projection.gearhead"
+        val CLASS_NAME_ANDROID_AUTO_WIRELESS = "com.google.android.apps.auto.wireless.setup.service.impl.WirelessStartupActivity"
         val PARAM_HOST_ADDRESS_EXTRA_NAME = "PARAM_HOST_ADDRESS"
         val PARAM_SERVICE_PORT_EXTRA_NAME = "PARAM_SERVICE_PORT"
         val PARAM_SERVICE_WIFI_NETWORK_EXTRA_NAME = "PARAM_SERVICE_WIFI_NETWORK"
         val PARAM_WIFI_INFO_EXTRA_NAME = "wifi_info"
 
         val intent = Intent()
-        intent.setClassName(PACKAGE_NAME_ANDROID_AUTO_WIRELESS, CLASS_NAME_ANDROID_AUTO_WIRELESS)
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        intent.putExtra(PARAM_HOST_ADDRESS_EXTRA_NAME, address)
-        intent.putExtra(PARAM_SERVICE_PORT_EXTRA_NAME, 5288)
-        intent.putExtra(PARAM_SERVICE_WIFI_NETWORK_EXTRA_NAME, network)
-        intent.putExtra(PARAM_WIFI_INFO_EXTRA_NAME, wifiInfo)
+            .setClassName(PACKAGE_NAME_ANDROID_AUTO_WIRELESS, CLASS_NAME_ANDROID_AUTO_WIRELESS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(PARAM_HOST_ADDRESS_EXTRA_NAME, address)
+            .putExtra(PARAM_SERVICE_PORT_EXTRA_NAME, 5288)
+            .putExtra(PARAM_SERVICE_WIFI_NETWORK_EXTRA_NAME, network)
+            .putExtra(PARAM_WIFI_INFO_EXTRA_NAME, wifiInfo)
+
         this.startActivity(intent)
     }
 }
