@@ -75,14 +75,15 @@ class AAGatewayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
 
-        if (mRunning) return START_STICKY
+        if (isRunning()) return START_REDELIVER_INTENT
 
         updateNotification("Started")
 
         mAccessory = intent?.getParcelableExtra(UsbManager.EXTRA_ACCESSORY) as UsbAccessory?
         if (mAccessory == null) {
-            stopService("No USB accessory found")
-            return START_STICKY
+            Log.e(LOG_TAG, "No USB accessory found")
+            stopService()
+            return START_REDELIVER_INTENT
         }
 
         mUSBFileDescriptor = mUsbManager.openAccessory(mAccessory)
@@ -91,8 +92,9 @@ class AAGatewayService : Service() {
             mPhoneInputStream = FileInputStream(fd)
             mPhoneOutputStream = FileOutputStream(fd)
         } else {
-            stopService("Cannot open USB accessory")
-            return START_STICKY
+            Log.e(LOG_TAG, "Cannot open USB accessory")
+            stopService()
+            return START_REDELIVER_INTENT
         }
 
         //Manually start AA.
@@ -115,29 +117,47 @@ class AAGatewayService : Service() {
                         Log.d(LOG_TAG, msg)
                     }
 
-                    USBPollThread().start()
-                    TCPPollThread().start()
+                    val usbThread = USBPollThread()
+                    val tcpThread = TCPPollThread()
+
+                    usbThread.start()
+                    tcpThread.start()
+
+                    usbThread.join()
+                    tcpThread.join()
+
+                    stopService()
                 }
                 else {
-                    stopService("Could not start wifi hotspot")
+                    Log.e(LOG_TAG, "Could not start wifi hotspot")
+                    stopService()
                 }
             }
         }
 
-        return START_STICKY
+        return START_REDELIVER_INTENT
     }
 
-    fun stopService(msg: String) {
-        updateNotification(msg)
-
+    private fun stopService() {
         if (mHotspotStarted) {
             mWifiHotspotHandler.stop()
             mHotspotStarted = false
         }
 
-        stopForeground(false)
+        stopForeground(true)
         stopSelf()
     }
+
+    private fun stopRunning(msg: String) {
+        if (mRunning) {
+            mRunning = false
+            updateNotification("Stopping wireless connection")
+        }
+
+        Log.i(LOG_TAG, msg)
+    }
+
+    private fun isRunning() = mRunning
 
     override fun onBind(p0: Intent?): IBinder? {
         TODO("Not yet implemented")
@@ -145,52 +165,49 @@ class AAGatewayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        mRunning = false
+        stopRunning("Service onDestroy")
     }
 
     private inner class USBPollThread: Thread() {
         override fun run() {
             super.run()
 
-            val buffer = ByteArray(16384)
-
             if (mPhoneInputStream == null || mPhoneOutputStream == null) {
-                mRunning = false
-                stopService("Error initializing USB")
+                stopRunning("Error initializing USB")
                 return
             }
 
             val phoneInputStream = mPhoneInputStream!!
 
-            if (mRunning) {
+            if (isRunning()) {
                 mUsbComplete = true
             }
 
-            if (!mLocalComplete && mRunning) {
+            if (isRunning() && !mLocalComplete) {
                 updateNotification("Waiting for TCP")
             }
 
-            while (!mLocalComplete && mRunning) {
+            while (isRunning() && !mLocalComplete) {
                 try {
                     sleep(100)
                 } catch (e: InterruptedException) {
-                    // Log.e(TAG, "usb - error sleeping "+e.getMessage());
+                    Log.e(LOG_TAG, "usb - error sleeping: ${e.message}")
                 }
             }
 
-            while (mRunning)
+            val buffer = ByteArray(16384)
+            while (isRunning())
             {
                 try {
                     val len = phoneInputStream.read(buffer)
                     mSocketOutputStream?.write(buffer.copyOf(len))
 
-                    if (mLogCommunication) Log.v(LOG_TAG, "USB read: ${buffer.toHex().substring(0, len*2)}")
+                    if (mLogCommunication) Log.v(LOG_TAG, "USB read: ${buffer.copyOf(len).toHex()}")
                 }
                 catch (e: Exception)
                 {
-                    // Log.e(TAG,"usb - in main loop " + e.getMessage());
-                    mRunning = false
-                    stopService("Error in USB main loop")
+                    Log.e(LOG_TAG,"usb - error in main loop: ${e.message}")
+                    stopRunning("Error in USB main loop")
                 }
             }
 
@@ -198,11 +215,11 @@ class AAGatewayService : Service() {
                 try {
                     it.close()
                 } catch (e: IOException) {
-                    // Log.d(TAG, "error closing usb " + e.getMessage());
+                    Log.e(LOG_TAG, "usb - error closing file descriptor: ${e.message}")
                 }
             }
-            // Log.d(TAG,"usb - end");
-            stopService("USB main loop stopped")
+
+            stopRunning("USB main loop stopped")
         }
 
     }
@@ -219,7 +236,7 @@ class AAGatewayService : Service() {
                 serverSocket.reuseAddress = true
 
                 socket = serverSocket.accept()
-                socket.soTimeout = 10000
+                socket?.soTimeout = 10000
 
                 try {
                     serverSocket.close()
@@ -234,33 +251,31 @@ class AAGatewayService : Service() {
                 updateNotification("Connected!")
             }
             catch (e: SocketTimeoutException) {
-                mRunning = false
-                stopService("Wireless client did not connect")
+                stopRunning("Wireless client did not connect")
             }
             catch (e: IOException) {
-                e.printStackTrace()
-                mRunning = false
-                stopService("Error initializing TCP")
+                Log.e(LOG_TAG, "tcp - error initializing: ${e.message}")
+                stopRunning("Error initializing TCP")
             }
 
-            if (mRunning) {
+            if (isRunning()) {
                 mLocalComplete = true
             }
 
-            if (!mUsbComplete && mRunning) {
+            if (isRunning() && !mUsbComplete) {
                 updateNotification("Waiting for USB")
             }
 
-            while (!mUsbComplete && mRunning) {
+            while (isRunning() && !mUsbComplete) {
                 try {
                     sleep(10)
                 } catch (e: InterruptedException) {
-                    //Log.e(TAG, "tcp - error sleeping " + e.message)
+                    Log.e(LOG_TAG, "tcp - error sleeping ${e.message}")
                 }
             }
 
             val buffer = ByteArray(16384)
-            while (mRunning) {
+            while (isRunning()) {
                 try {
                     var pos = 4
 
@@ -278,21 +293,20 @@ class AAGatewayService : Service() {
 
                     if (mLogCommunication) Log.v(LOG_TAG, "TCP read: ${buffer.copyOf(encLen + pos).toHex()}")
                 } catch (e: java.lang.Exception) {
-                    //Log.e(TAG, "tcp - in main loop " + e.message)
-                    mRunning = false
-                    stopService("Error in TCP main loop")
+                    Log.e(LOG_TAG, "tcp - error in main loop: ${e.message}")
+                    stopRunning("Error in TCP main loop")
                 }
             }
 
-            if (socket != null) {
+            socket?.also {
                 try {
-                    socket.close()
+                    it.close()
                 } catch (e: IOException) {
-                    e.printStackTrace()
+                    Log.e(LOG_TAG, "tcp - error closing socket: ${e.message}")
                 }
             }
 
-            stopService("TCP main loop stopped")
+            stopRunning("TCP main loop stopped")
         }
     }
 
