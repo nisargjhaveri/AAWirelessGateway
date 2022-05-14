@@ -117,16 +117,7 @@ class AAGatewayService : Service() {
                         Log.d(LOG_TAG, msg)
                     }
 
-                    val usbThread = USBPollThread()
-                    val tcpThread = TCPPollThread()
-
-                    usbThread.start()
-                    tcpThread.start()
-
-                    usbThread.join()
-                    tcpThread.join()
-
-                    stopService()
+                    MainHandlerThread().start()
                 }
                 else {
                     Log.e(LOG_TAG, "Could not start wifi hotspot")
@@ -166,6 +157,23 @@ class AAGatewayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopRunning("Service onDestroy")
+    }
+
+    private inner class MainHandlerThread: Thread() {
+        private val mUsbThread = USBPollThread()
+        private val mTcpThread = TCPPollThread()
+
+        override fun run() {
+            super.run()
+
+            mUsbThread.start()
+            mTcpThread.start()
+
+            mUsbThread.join()
+            mTcpThread.join()
+
+            stopService()
+        }
     }
 
     private inner class USBPollThread: Thread() {
