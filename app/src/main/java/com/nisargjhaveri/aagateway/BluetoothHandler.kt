@@ -15,6 +15,8 @@ import java.io.IOException
 import java.util.*
 
 class BluetoothHandler (context: Context, activityResultCaller: ActivityResultCaller?) {
+    data class BluetoothDeviceInfo(val address: String, val name: String?)
+
     private val mContext = context
     private val mActivityResultCaller = activityResultCaller
 
@@ -67,7 +69,7 @@ class BluetoothHandler (context: Context, activityResultCaller: ActivityResultCa
         }
     }
 
-    fun hasPermissions(): Boolean {
+    fun hasConnectPermissions(): Boolean {
         return android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
                 && mContext.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
     }
@@ -88,6 +90,23 @@ class BluetoothHandler (context: Context, activityResultCaller: ActivityResultCa
             val device = adapter.getRemoteDevice(mac.uppercase())
             ConnectThread(device, log).start()
         }
+    }
+
+    fun getBondedDevices(): List<BluetoothDeviceInfo> {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && mContext.checkSelfPermission(
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return listOf()
+        }
+
+        mBluetoothAdapter?.let { adapter ->
+            return adapter.bondedDevices.map {
+                BluetoothDeviceInfo(it.address, it.name)
+            }
+        }
+
+        return listOf()
     }
 
     private inner class ConnectThread(device: BluetoothDevice, val log: (String) -> Unit) : Thread() {

@@ -24,17 +24,26 @@
             app:key="gateway_wifi_password"
             app:title="Gateway Wifi password" />
 
-        <EditTextPreference
+        <ListPreference
             app:key="gateway_bt_mac"
-            app:title="Gateway Bluetooth MAC Address"
+            app:title="Gateway Bluetooth Device"
+            app:dialogTitle="Select Gateway Device"
             app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 
     <PreferenceCategory app:title="Gateway device settings" app:dependency="is_gateway">
-        <EditTextPreference
+        <ListPreference
             app:key="client_bt_mac"
-            app:title="Client Bluetooth MAC Address"
+            app:title="Client Bluetooth Device"
+            app:dialogTitle="Select Client Device"
             app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="Common settings">
+        <Preference
+            app:key="pair_bluetooth"
+            app:title="Pair Bluetooth Device"
+            android:summary="Pair a new bluetooth device to be used as gateway or client" />
     </PreferenceCategory>
 
 </PreferenceScreen>
