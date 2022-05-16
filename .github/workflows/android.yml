@@ -2,7 +2,6 @@ name: Android CI
 
 on:
   push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -24,9 +23,12 @@ jobs:
       run: chmod +x gradlew
     - name: Build with Gradle
       run: ./gradlew build
-      
+
+    - name: Rename built apk
+      run: mv ./app/build/outputs/apk/debug/app-debug.apk ./app/build/outputs/apk/debug/AAWirelessGateway-debug.apk
+
     - name: Upload apk
       uses: actions/upload-artifact@v3.0.0
       with:
         name: AAWirelessGateway-debug
-        path: ./app/build/outputs/apk/debug/app-debug.apk
+        path: ./app/build/outputs/apk/debug/AAWirelessGateway-debug.apk
