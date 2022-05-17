@@ -6,6 +6,9 @@
     <uses-feature
         android:name="android.hardware.bluetooth"
         android:required="true" />
+    <uses-feature
+        android:name="android.hardware.wifi"
+        android:required="true" />
 
     <uses-permission
         android:name="android.permission.BLUETOOTH"

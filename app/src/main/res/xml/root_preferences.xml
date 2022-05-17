@@ -44,6 +44,22 @@
             app:key="pair_bluetooth"
             app:title="Pair Bluetooth Device"
             android:summary="Pair a new bluetooth device to be used as gateway or client" />
+
+        <Preference
+            app:key="bluetooth_permissions"
+            app:title="Bluetooth Permissions" />
+
+        <Preference
+            app:key="write_settings_permission"
+            app:title="Modify System Settings Permission" />
+
+        <Preference
+            app:key="system_alert_window_permission"
+            app:title="Display Over Other Apps Permission" />
+
+<!--        <Preference-->
+<!--            app:key="manage_usb_permission"-->
+<!--            app:title="Manage USB Permission (Optional)" />-->
     </PreferenceCategory>
 
 </PreferenceScreen>

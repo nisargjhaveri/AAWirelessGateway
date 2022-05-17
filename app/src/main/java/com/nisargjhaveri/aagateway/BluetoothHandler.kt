@@ -70,12 +70,13 @@ class BluetoothHandler (context: Context, activityResultCaller: ActivityResultCa
     }
 
     fun hasConnectPermissions(): Boolean {
-        return android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
-                && mContext.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        return android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S
+                || mContext.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
     }
 
-    fun requestPermissions(callback: ((success: Boolean) -> Unit)?) {
+    fun requestConnectPermissions(callback: ((success: Boolean) -> Unit)?) {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) {
+            callback?.invoke(true)
             return
         }
 
