@@ -62,7 +62,8 @@
         <activity
             android:name=".USBReceiverActivity"
             android:showOnLockScreen="true"
-            android:exported="true">
+            android:exported="true"
+            android:enabled="false">
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_ACCESSORY_ATTACHED"/>
             </intent-filter>
@@ -74,7 +75,8 @@
 
         <receiver
             android:name=".BluetoothReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:enabled="false">
             <intent-filter>
                 <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
             </intent-filter>

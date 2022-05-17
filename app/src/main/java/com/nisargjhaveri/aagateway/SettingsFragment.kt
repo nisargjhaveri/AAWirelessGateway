@@ -1,6 +1,7 @@
 package com.nisargjhaveri.aagateway
 
 import android.app.AlertDialog
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -8,10 +9,7 @@ import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.provider.Settings
 import androidx.appcompat.content.res.AppCompatResources
-import androidx.preference.ListPreference
-import androidx.preference.MultiSelectListPreference
-import androidx.preference.Preference
-import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.*
 
 class SettingsFragment : PreferenceFragmentCompat() {
     private var mBluetoothHandler: BluetoothHandler? = null
@@ -34,6 +32,22 @@ class SettingsFragment : PreferenceFragmentCompat() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         setPreferencesFromResource(R.xml.root_preferences, rootKey)
 
+        findPreference<SwitchPreferenceCompat>("is_wireless_client")?.apply {
+            setOnPreferenceChangeListener() { preference, enabled ->
+                if (enabled is Boolean) {
+                    setComponentEnabledForPreference(preference, enabled)
+                }
+                true
+            }
+        }
+        findPreference<SwitchPreferenceCompat>("is_gateway")?.apply {
+            setOnPreferenceChangeListener() { preference, enabled ->
+                if (enabled is Boolean) {
+                    setComponentEnabledForPreference(preference, enabled)
+                }
+                true
+            }
+        }
         findPreference<Preference>("pair_bluetooth")?.apply {
             intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
         }
@@ -156,4 +170,25 @@ class SettingsFragment : PreferenceFragmentCompat() {
         }
     }
 
+    private fun setComponentEnabledForPreference(preference: Preference, enabled: Boolean) {
+        val componentName = when (preference.key) {
+            "is_wireless_client" -> {
+                ComponentName(preference.context, BluetoothReceiver::class.java)
+            }
+            "is_gateway" -> {
+                ComponentName(preference.context, USBReceiverActivity::class.java)
+            }
+            else -> {
+                null
+            }
+        }
+
+        componentName?.let {
+            preference.context.packageManager.setComponentEnabledSetting(
+                it,
+                if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            )
+        }
+    }
 }
