@@ -6,7 +6,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
+import android.os.Build
 import android.os.IBinder
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 import java.lang.reflect.Method
 
 object AndroidAutoHelper {
@@ -37,6 +39,10 @@ object AndroidAutoHelper {
     @SuppressLint("SoonBlockedPrivateApi", "PrivateApi", "DiscouragedPrivateApi")
     private fun grantUsbAccessoryPermission(usbAccessory: UsbAccessory, uid: Int): Boolean {
         return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                HiddenApiBypass.addHiddenApiExemptions("Landroid/hardware/usb/IUsbManager")
+            }
+
             val serviceManagerClass = Class.forName("android.os.ServiceManager")
             val getServiceMethod: Method = serviceManagerClass.getDeclaredMethod("getService", String::class.java)
             getServiceMethod.isAccessible = true
@@ -57,6 +63,11 @@ object AndroidAutoHelper {
         } catch (e: Exception) {
             e.printStackTrace()
             false
+        }
+        finally {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                HiddenApiBypass.clearHiddenApiExemptions()
+            }
         }
     }
 }
