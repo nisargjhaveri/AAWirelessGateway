@@ -8,13 +8,10 @@ import android.content.Intent
 import android.net.Network
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
-import android.os.Build
-import android.os.IBinder
+import android.os.*
 import android.util.Log
 import androidx.preference.PreferenceManager
-import java.io.IOException
-import java.io.InputStream
-import java.io.OutputStream
+import java.lang.Exception
 import java.net.*
 
 
@@ -24,6 +21,9 @@ class AAWirelessClientService : Service() {
 
         private const val NOTIFICATION_CHANNEL_ID = "default"
         private const val NOTIFICATION_ID = 2
+
+        private const val POWER_SAVE_MODE = 1
+        private const val INSUFFICIENT_BATTERY = 2
     }
 
     private var mRunning = false
@@ -67,12 +67,27 @@ class AAWirelessClientService : Service() {
         val bssid = preferences.getString("gateway_wifi_bssid", null)
         val password = preferences.getString("gateway_wifi_password", null)
 
-        val wifiClientHandler = WifiClientHandler(this, null)
-
         if (ssid == null && bssid == null && password == null) {
             stopService("Wifi settings not found")
             return START_STICKY
         }
+
+        val connectionBatteryLimit = preferences.getInt("connection_battery_limit", 0)
+        val connectInPowerSaveMode = preferences.getBoolean("connect_in_power_save_mode", false)
+
+        var connectionRejectionReason = 0
+
+        if (!connectInPowerSaveMode && getSystemService(PowerManager::class.java)?.isPowerSaveMode == true) {
+            connectionRejectionReason = connectionRejectionReason or POWER_SAVE_MODE
+        }
+
+        if (connectionBatteryLimit > 0
+            && (getSystemService(BatteryManager::class.java)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: 100) < connectionBatteryLimit)
+        {
+            connectionRejectionReason = connectionRejectionReason or INSUFFICIENT_BATTERY
+        }
+
+        val wifiClientHandler = WifiClientHandler(this, null)
 
         wifiClientHandler.onLost {
             stopService("Wifi connection lost")
@@ -81,20 +96,27 @@ class AAWirelessClientService : Service() {
         updateNotification("Connecting to gateway wifi")
         wifiClientHandler.connect(ssid!!, bssid!!, password!!) { success, msg, network, wifiInfo ->
             if (success) {
-                Thread() {
-                    kotlin.run {
-                        val addressInt = getSystemService(WifiManager::class.java).dhcpInfo.gateway
-                        val address = "%d.%d.%d.%d".format(null,
-                            addressInt and 0xff,
-                            addressInt shr 8 and 0xff,
-                            addressInt shr 16 and 0xff,
-                            addressInt shr 24 and 0xff)
+                val addressInt = getSystemService(WifiManager::class.java).dhcpInfo.gateway
+                val address = "%d.%d.%d.%d".format(null,
+                    addressInt and 0xff,
+                    addressInt shr 8 and 0xff,
+                    addressInt shr 16 and 0xff,
+                    addressInt shr 24 and 0xff)
 
-                        connectAAWireless(address, network, wifiInfo)
-
-                        updateNotification("Started Android Auto")
+                connectControlChannel(address, network, connectionRejectionReason) {
+                    if (connectionRejectionReason > 0) {
+                        wifiClientHandler.disconnect()
+                        stopService("Rejected connection with reason $connectionRejectionReason")
                     }
-                }.start()
+                }
+
+                if (connectionRejectionReason == 0) {
+                    connectAAWireless(address, network, wifiInfo)
+                    updateNotification("Started Android Auto")
+                }
+                else {
+                    updateNotification("Rejecting connection with reason $connectionRejectionReason")
+                }
             }
             else {
                 stopService(msg ?: "Wifi connection failed")
@@ -117,6 +139,27 @@ class AAWirelessClientService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         mRunning = false
+    }
+
+    private fun connectControlChannel(address: String, network: Network?, connectionRejectionReason: Int, callback: () -> Unit) {
+        Thread {
+            kotlin.run {
+                try {
+                    val socket = Socket()
+                    network?.bindSocket(socket)
+
+                    socket.connect(InetSocketAddress(address, 5287))
+
+                    socket.getOutputStream().write(connectionRejectionReason)
+                    socket.close()
+
+                    Handler(mainLooper).post(callback)
+                }
+                catch (e: Exception) {
+                    Log.e(LOG_TAG, "Error in handshake: ${e.message}")
+                }
+            }
+        }.start()
     }
 
     private fun connectAAWireless(address: String, network: Network?, wifiInfo: WifiInfo?) {

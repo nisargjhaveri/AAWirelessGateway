@@ -74,7 +74,7 @@ class WifiClientHandler(context: Context, activityResultCaller: ActivityResultCa
         mLostCallback = callback
     }
 
-    fun connect(ssid: String = "HUR", bssid: String ="5a:8b:dd:a9:2e:46", passphrase: String = "AndroidAutoConnect", callback: (success: Boolean, msg: String?, network: Network?, wifiInfo: WifiInfo?) -> Unit) {
+    fun connect(ssid: String, bssid: String, passphrase: String, callback: (success: Boolean, msg: String?, network: Network?, wifiInfo: WifiInfo?) -> Unit) {
         if (mIsConnected) {
             disconnect()
         }

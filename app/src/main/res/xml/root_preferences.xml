@@ -29,6 +29,19 @@
             app:title="Gateway Bluetooth Device"
             app:dialogTitle="Select Gateway Device"
             app:useSimpleSummaryProvider="true" />
+
+        <SeekBarPreference
+            app:key="connection_battery_limit"
+            app:title="Don't connect when battery is below"
+            app:seekBarIncrement="5"
+            app:min="0"
+            android:max="100"
+            app:showSeekBarValue="true" />
+
+        <SwitchPreferenceCompat
+            app:key="connect_in_power_save_mode"
+            app:title="Connect in power save mode"
+            android:summary="Allow connection even when power save mode is enabled on this device"/>
     </PreferenceCategory>
 
     <PreferenceCategory app:title="Gateway device settings" app:dependency="is_gateway">
@@ -37,6 +50,28 @@
             app:title="Client Bluetooth Device"
             app:dialogTitle="Select Client Device"
             app:useSimpleSummaryProvider="true" />
+
+        <SwitchPreferenceCompat
+            app:key="usb_fallback"
+            app:title="Fallback to USB Android Auto" />
+
+        <SeekBarPreference
+            app:key="client_handshake_timeout"
+            app:title="Seconds to wait for client handshake"
+            app:min="5"
+            android:max="60"
+            app:defaultValue="15"
+            app:showSeekBarValue="true"
+            app:dependency="usb_fallback" />
+
+        <SeekBarPreference
+            app:key="client_connection_timeout"
+            app:title="Seconds to wait for client connection"
+            app:min="15"
+            android:max="180"
+            app:defaultValue="60"
+            app:showSeekBarValue="true"
+            app:dependency="usb_fallback" />
     </PreferenceCategory>
 
     <PreferenceCategory app:title="Common settings">
@@ -57,9 +92,10 @@
             app:key="system_alert_window_permission"
             app:title="Display Over Other Apps Permission" />
 
-<!--        <Preference-->
-<!--            app:key="manage_usb_permission"-->
-<!--            app:title="Manage USB Permission (Optional)" />-->
+        <Preference
+            app:key="manage_usb_permission"
+            app:title="Manage USB Permission (Optional)"
+            app:dependency="is_gateway" />
     </PreferenceCategory>
 
 </PreferenceScreen>

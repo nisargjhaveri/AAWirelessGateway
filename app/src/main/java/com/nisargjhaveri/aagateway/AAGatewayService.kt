@@ -8,6 +8,7 @@ import android.content.Intent
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -22,6 +23,9 @@ class AAGatewayService : Service() {
 
         private const val NOTIFICATION_CHANNEL_ID = "default"
         private const val NOTIFICATION_ID = 1
+
+        private const val DEFAULT_HANDSHAKE_TIMEOUT = 60
+        private const val DEFAULT_CONNECTION_TIMEOUT = 180
     }
 
     private var mLogCommunication = false
@@ -40,6 +44,12 @@ class AAGatewayService : Service() {
     private var mUsbComplete = false
     private var mLocalComplete = false
     private var mHotspotStarted = false
+
+    private var mUsbFallback = false
+    private var mClientHandshakeTimeout = DEFAULT_HANDSHAKE_TIMEOUT
+    private var mClientConnectionTimeout = DEFAULT_CONNECTION_TIMEOUT
+
+    private val mMainHandlerThread = MainHandlerThread()
 
     private val mUsbManager: UsbManager by lazy { getSystemService(UsbManager::class.java) }
 
@@ -106,10 +116,14 @@ class AAGatewayService : Service() {
         val preferences = PreferenceManager.getDefaultSharedPreferences(this)
         val clientAddress = preferences.getString("client_bt_mac", null)
 
+        mUsbFallback = preferences.getBoolean("usb_fallback", false)
+        mClientHandshakeTimeout = if (mUsbFallback) { preferences.getInt("client_handshake_timeout", 15) } else { DEFAULT_HANDSHAKE_TIMEOUT }
+        mClientConnectionTimeout = if (mUsbFallback) { preferences.getInt("client_connection_timeout", 60) } else { DEFAULT_CONNECTION_TIMEOUT }
+
         clientAddress?.also { address ->
             updateNotification("Starting wifi hotspot")
-            mWifiHotspotHandler.start { success ->
-                if (success) {
+            mWifiHotspotHandler.start { wifiSuccess ->
+                if (wifiSuccess) {
                     mHotspotStarted = true
 
                     updateNotification("Waiting for wireless client")
@@ -117,7 +131,7 @@ class AAGatewayService : Service() {
                         Log.d(LOG_TAG, msg)
                     }
 
-                    MainHandlerThread().start()
+                    mMainHandlerThread.start()
                 }
                 else {
                     Log.e(LOG_TAG, "Could not start wifi hotspot")
@@ -127,6 +141,32 @@ class AAGatewayService : Service() {
         }
 
         return START_REDELIVER_INTENT
+    }
+
+    private fun onInitialHandshake(success: Boolean, rejectReason: Int) {
+        if (success && rejectReason == 0) {
+            updateNotification("Initial Handshake done")
+        }
+        else {
+            mMainHandlerThread.cancel()
+
+            if (success) {
+                Log.d(LOG_TAG, "Connection was rejected with reason $rejectReason")
+            }
+        }
+    }
+
+    private fun onMainHandlerThreadStopped() {
+        if (!mLocalComplete && mUsbFallback) {
+            mAccessory?.let {
+                updateNotification("Starting USB Android Auto")
+                if (!AndroidAutoHelper.startUsbAndroidAuto(this@AAGatewayService, it)) {
+                    Log.i(LOG_TAG, "Failed starting USB Android Auto")
+                }
+            }
+        }
+
+        stopService()
     }
 
     private fun stopService() {
@@ -163,20 +203,38 @@ class AAGatewayService : Service() {
         private val mUsbThread = USBPollThread()
         private val mTcpThread = TCPPollThread()
 
+        private val mTcpControlThread = TCPControlThread()
+
+        fun cancel() {
+            stopRunning("Cancelled")
+
+            mUsbThread.cancel()
+            mTcpThread.cancel()
+            mTcpControlThread.cancel()
+        }
+
         override fun run() {
             super.run()
 
             mUsbThread.start()
             mTcpThread.start()
 
+            mTcpControlThread.start()
+
             mUsbThread.join()
             mTcpThread.join()
 
-            stopService()
+            Handler(mainLooper).post {
+                onMainHandlerThreadStopped()
+            }
         }
     }
 
     private inner class USBPollThread: Thread() {
+        fun cancel() {
+            // Don't do anything
+        }
+
         override fun run() {
             super.run()
 
@@ -219,9 +277,9 @@ class AAGatewayService : Service() {
                 }
             }
 
-            mUSBFileDescriptor?.also {
+            mUSBFileDescriptor?.apply {
                 try {
-                    it.close()
+                    close()
                 } catch (e: IOException) {
                     Log.e(LOG_TAG, "usb - error closing file descriptor: ${e.message}")
                 }
@@ -233,28 +291,40 @@ class AAGatewayService : Service() {
     }
 
     private inner class TCPPollThread: Thread() {
+        var mServerSocket: ServerSocket? = null
+
+        fun cancel() {
+            mServerSocket?.runCatching {
+                close()
+            }
+        }
+
         override fun run() {
             super.run()
 
             var socket: Socket? = null
 
             try {
-                val serverSocket = ServerSocket(5288, 5)
-                serverSocket.soTimeout = 60000
-                serverSocket.reuseAddress = true
-
-                socket = serverSocket.accept()
-                socket?.soTimeout = 10000
-
-                try {
-                    serverSocket.close()
-                }
-                catch (e: IOException) {
-                    // Ignore
+                mServerSocket = ServerSocket(5288, 5).apply {
+                    soTimeout = mClientConnectionTimeout * 1000
+                    reuseAddress = true
                 }
 
-                mSocketOutputStream = socket?.getOutputStream()
-                mSocketInputStream = DataInputStream(socket?.getInputStream())
+                mServerSocket?.let {
+                    socket = it.accept().apply {
+                        soTimeout = 10000
+                    }
+                }
+
+                mServerSocket?.runCatching {
+                    close()
+                }
+                mServerSocket = null
+
+                socket?.also {
+                    mSocketOutputStream = it.getOutputStream()
+                    mSocketInputStream = DataInputStream(it.getInputStream())
+                }
 
                 updateNotification("Connected!")
             }
@@ -264,6 +334,10 @@ class AAGatewayService : Service() {
             catch (e: IOException) {
                 Log.e(LOG_TAG, "tcp - error initializing: ${e.message}")
                 stopRunning("Error initializing TCP")
+            }
+
+            if (isRunning() && socket == null) {
+                stopRunning("Error connecting to wireless client")
             }
 
             if (isRunning()) {
@@ -306,15 +380,65 @@ class AAGatewayService : Service() {
                 }
             }
 
-            socket?.also {
+            socket?.apply {
                 try {
-                    it.close()
+                    close()
                 } catch (e: IOException) {
                     Log.e(LOG_TAG, "tcp - error closing socket: ${e.message}")
                 }
             }
 
             stopRunning("TCP main loop stopped")
+        }
+    }
+
+    private inner class TCPControlThread: Thread() {
+        var mServerSocket: ServerSocket? = null
+
+        fun cancel() {
+            mServerSocket?.runCatching {
+                close()
+            }
+        }
+
+        override fun run() {
+            super.run()
+
+            var success = false
+            var readValue = -1
+
+            try {
+                mServerSocket = ServerSocket(5287, 5).apply {
+                    soTimeout = mClientHandshakeTimeout * 1000
+                    reuseAddress = true
+                }
+
+                mServerSocket?.let {
+                    it.accept().apply {
+                        soTimeout = 10000
+
+                        success = true
+                        readValue = getInputStream().read()
+
+                        close()
+                    }
+                }
+
+                mServerSocket?.runCatching {
+                    close()
+                }
+                mServerSocket = null
+            }
+            catch (e: SocketTimeoutException) {
+                Log.e(LOG_TAG, "Initial handshake did not happen in time")
+            }
+            catch (e: IOException) {
+                Log.e(LOG_TAG, "tcp handshake - error initializing: ${e.message}")
+            }
+
+            Handler(mainLooper).post {
+                onInitialHandshake(success, readValue)
+            }
         }
     }
 

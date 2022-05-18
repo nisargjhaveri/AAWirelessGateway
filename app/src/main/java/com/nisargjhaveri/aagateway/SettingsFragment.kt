@@ -74,7 +74,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
                     setMessage(
                         "You need to make this app an system app by moving it to /system/priv-app " +
                                 "and ensure that MANAGE_USB permission is whitelisted. " +
-                                "This would require your phone to be rooted."
+                                "This would require your device to be rooted."
                     )
                     setPositiveButton("Okay") { _, _ ->
                         // Do nothing
@@ -140,10 +140,15 @@ class SettingsFragment : PreferenceFragmentCompat() {
             icon = if (isEnabled) mErrorIcon else mDoneIcon
         }
 
+        val manageUSBPermissionGranted = context.checkSelfPermission("android.permission.MANAGE_USB") == PackageManager.PERMISSION_GRANTED
         findPreference<Preference>("manage_usb_permission")?.apply {
-            isEnabled = context.checkSelfPermission("android.permission.MANAGE_USB") != PackageManager.PERMISSION_GRANTED
-            summary = if (isEnabled) "Required for fallback to USB Android Auto in gateway mode" else "Already granted"
-            icon = if (isEnabled) mErrorIcon else mDoneIcon
+            isEnabled = !manageUSBPermissionGranted
+            summary = if (!manageUSBPermissionGranted) "Required for fallback to USB Android Auto in gateway mode" else "Already granted"
+            icon = if (manageUSBPermissionGranted) mDoneIcon else null
+        }
+        findPreference<Preference>("usb_fallback")?.apply {
+            isEnabled = manageUSBPermissionGranted
+            summary = if (!manageUSBPermissionGranted) "The app doesn't have the required Manage USB permission" else "When wireless connection fails, start USB Android Auto in this device"
         }
     }
 
