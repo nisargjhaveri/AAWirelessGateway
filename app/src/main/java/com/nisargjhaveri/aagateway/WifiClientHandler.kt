@@ -41,7 +41,12 @@ class WifiClientHandler(context: Context, activityResultCaller: ActivityResultCa
 
             if (!mIsConnected) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    handleConnected(network, networkCapabilities.transportInfo as WifiInfo)
+                    val wifiInfo: WifiInfo = if (networkCapabilities.transportInfo != null && networkCapabilities.transportInfo is WifiInfo) {
+                        networkCapabilities.transportInfo as WifiInfo
+                    } else {
+                        mWifiManager.connectionInfo
+                    }
+                    handleConnected(network, wifiInfo)
                 }
                 else if (mWifiManager.connectionInfo.ssid == mSsid && mWifiManager.connectionInfo.supplicantState == SupplicantState.COMPLETED) {
                     handleConnected(network, mWifiManager.connectionInfo)
@@ -128,7 +133,7 @@ class WifiClientHandler(context: Context, activityResultCaller: ActivityResultCa
             }
         }
 
-        mConnectivityManager.requestNetwork(request.build(), mNetworkCallback, 6000)
+        mConnectivityManager.requestNetwork(request.build(), mNetworkCallback, 15000)
     }
 
     private fun handleConnected(network: Network, wifiInfo: WifiInfo) {
