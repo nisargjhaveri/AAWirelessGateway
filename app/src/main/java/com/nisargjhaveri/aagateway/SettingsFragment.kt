@@ -13,6 +13,7 @@ import androidx.preference.*
 
 class SettingsFragment : PreferenceFragmentCompat() {
     private var mBluetoothHandler: BluetoothHandler? = null
+    private var mWifiClientHandler: WifiClientHandler? = null
 
     private var mErrorIcon: Drawable? = null
     private var mDoneIcon: Drawable? = null
@@ -21,12 +22,14 @@ class SettingsFragment : PreferenceFragmentCompat() {
         super.onAttach(context)
 
         mBluetoothHandler = BluetoothHandler(context, this)
+        mWifiClientHandler = WifiClientHandler(context, this)
     }
 
     override fun onDetach() {
         super.onDetach()
 
         mBluetoothHandler = null
+        mWifiClientHandler = null
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -48,6 +51,13 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 true
             }
         }
+        findPreference<EditTextPreference>("gateway_wifi_password")?.apply {
+            setSummaryProvider {
+                val length = (it as? EditTextPreference)?.text?.length ?: 0
+
+                if (length > 0) "*".repeat(length) else "Not set"
+            }
+        }
         findPreference<Preference>("pair_bluetooth")?.apply {
             intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
         }
@@ -63,6 +73,23 @@ class SettingsFragment : PreferenceFragmentCompat() {
             setOnPreferenceClickListener {
                 mBluetoothHandler?.requestConnectPermissions {
                     updateSettingsState(context)
+                }
+                true
+            }
+        }
+        findPreference<Preference>("location_permissions")?.apply {
+            setOnPreferenceClickListener {
+                mWifiClientHandler?.apply {
+                    if (!hasLocationPermissions()) {
+                        requestLocationPermissions {
+                            updateSettingsState(context)
+                        }
+                    }
+                    else if (!hasBackgroundLocationPermission()) {
+                        requestBackgroundLocationPermissions {
+                            updateSettingsState(context)
+                        }
+                    }
                 }
                 true
             }
@@ -138,6 +165,19 @@ class SettingsFragment : PreferenceFragmentCompat() {
             isEnabled = !(mBluetoothHandler?.hasConnectPermissions() ?: false)
             summary = if (isEnabled) "Required to connect with bluetooth" else "Already granted"
             icon = if (isEnabled) mErrorIcon else mDoneIcon
+        }
+
+        findPreference<Preference>("location_permissions")?.apply {
+            val hasLocationPermissions = mWifiClientHandler?.hasLocationPermissions() ?: false
+            val hasBackgroundLocationPermissions = mWifiClientHandler?.hasBackgroundLocationPermission() ?: false
+            isEnabled = !(hasLocationPermissions && hasBackgroundLocationPermissions)
+            summary = if (!hasLocationPermissions)
+                "Precise location permission is required to get connected wifi information"
+            else if (!hasBackgroundLocationPermissions)
+                "Please also grant background location permission by selecting \"Allow all the time\""
+            else
+                "Already granted"
+            icon = if (isEnabled) mErrorIcon else if (hasLocationPermissions && hasBackgroundLocationPermissions) mDoneIcon else null
         }
 
         val manageUSBPermissionGranted = context.checkSelfPermission("android.permission.MANAGE_USB") == PackageManager.PERMISSION_GRANTED

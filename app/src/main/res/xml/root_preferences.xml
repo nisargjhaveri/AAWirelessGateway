@@ -16,13 +16,20 @@
             app:useSimpleSummaryProvider="true" />
 
         <EditTextPreference
-            app:key="gateway_wifi_bssid"
-            app:title="Gateway Wifi BSSID"
-            app:useSimpleSummaryProvider="true" />
-
-        <EditTextPreference
             app:key="gateway_wifi_password"
             app:title="Gateway Wifi password" />
+
+        <SwitchPreferenceCompat
+            app:key="gateway_wifi_allow_internet"
+            app:title="Use Gateway Wifi for Internet"
+            app:summary="Use this if gateway wifi MAC address is not stable"
+            app:disableDependentsState="true" />
+
+        <EditTextPreference
+            app:key="gateway_wifi_bssid"
+            app:title="Gateway Wifi BSSID"
+            app:useSimpleSummaryProvider="true"
+            app:dependency="gateway_wifi_allow_internet" />
 
         <ListPreference
             app:key="gateway_bt_mac"
@@ -83,6 +90,11 @@
         <Preference
             app:key="bluetooth_permissions"
             app:title="Bluetooth Permissions" />
+
+        <Preference
+            app:key="location_permissions"
+            app:title="Location Permissions"
+            app:dependency="is_wireless_client"/>
 
         <Preference
             app:key="write_settings_permission"

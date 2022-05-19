@@ -64,10 +64,11 @@ class AAWirelessClientService : Service() {
         val preferences = PreferenceManager.getDefaultSharedPreferences(this)
 
         val ssid = preferences.getString("gateway_wifi_ssid", null)
-        val bssid = preferences.getString("gateway_wifi_bssid", null)
         val password = preferences.getString("gateway_wifi_password", null)
+        val allowInternet = preferences.getBoolean("gateway_wifi_allow_internet", false)
+        val bssid = if (allowInternet) null else preferences.getString("gateway_wifi_bssid", null)
 
-        if (ssid == null && bssid == null && password == null) {
+        if (ssid == null || password == null) {
             stopService("Wifi settings not found")
             return START_STICKY
         }
@@ -94,7 +95,7 @@ class AAWirelessClientService : Service() {
         }
 
         updateNotification("Connecting to gateway wifi")
-        wifiClientHandler.connect(ssid!!, bssid!!, password!!) { success, msg, network, wifiInfo ->
+        wifiClientHandler.connect(ssid, password, bssid, 60000) { success, msg, network, wifiInfo ->
             if (success) {
                 val addressInt = getSystemService(WifiManager::class.java).dhcpInfo.gateway
                 val address = "%d.%d.%d.%d".format(null,
