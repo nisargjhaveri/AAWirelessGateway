@@ -2,8 +2,8 @@ name: Android CI
 
 on:
   push:
-  pull_request:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
   build:
@@ -19,16 +19,29 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
+    - name: Setup keystore
+      run: |
+        KEYSTORE_FILE="${RUNNER_TEMP}/keystore/keystore.jks"
+        echo ${KEYSTORE_FILE_BASE64} | base64 -d > ${KEYSTORE_FILE}
+        
+        echo > ./keystore.properties
+        echo "storeFile=${KEYSTORE_FILE}" >> ./keystore.properties
+        echo "storePassword=${KEYSTORE_PASSWORD}" >> ./keystore.properties
+        echo "keyAlias=${KEY_ALIAS}" >> ./keystore.properties
+        echo "keyPassword=${KEY_PASSWORD}" >> ./keystore.properties
+      env:
+        KEYSTORE_FILE_BASE64: ${{ secrets.KEYSTORE_FILE_BASE64 }}
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
     - name: Build with Gradle
-      run: ./gradlew build
+      run: ./gradlew build -PsignDebug=1 -PsignRelease=1
 
-    - name: Rename built apk
-      run: mv ./app/build/outputs/apk/debug/app-debug.apk ./app/build/outputs/apk/debug/AAWirelessGateway-debug.apk
-
-    - name: Upload apk
+    - name: Upload outputs
       uses: actions/upload-artifact@v3.0.0
       with:
-        name: AAWirelessGateway-debug
-        path: ./app/build/outputs/apk/debug/AAWirelessGateway-debug.apk
+        name: AAWirelessGateway
+        path: ./app/build/outputs/apk/
