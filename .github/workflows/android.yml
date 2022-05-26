@@ -21,8 +21,11 @@ jobs:
 
     - name: Setup keystore
       run: |
-        KEYSTORE_FILE="${RUNNER_TEMP}/keystore/keystore.jks"
-        echo ${KEYSTORE_FILE_BASE64} | base64 -d > ${KEYSTORE_FILE}
+        KEYSTORE_DIR="${RUNNER_TEMP}/keystore/"
+        KEYSTORE_FILE="${KEYSTORE_DIR}/keystore.jks"
+        
+        mkdir "${KEYSTORE_DIR}"
+        echo "${KEYSTORE_FILE_BASE64}" | base64 -d > "${KEYSTORE_FILE}"
         
         echo > ./keystore.properties
         echo "storeFile=${KEYSTORE_FILE}" >> ./keystore.properties
