@@ -3,23 +3,43 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def keystoreProperties = new Properties()
+
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+if (keystorePropertiesFile.canRead()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
+    signingConfigs {
+        config {
+            storeFile keystoreProperties["storeFile"] ? file(keystoreProperties["storeFile"]) : null
+            storePassword keystoreProperties["storePassword"]
+            keyAlias keystoreProperties["keyAlias"]
+            keyPassword keystoreProperties["keyPassword"]
+        }
+    }
+
     compileSdk 32
 
     defaultConfig {
         applicationId "com.nisargjhaveri.aagateway"
         minSdk 26
         targetSdk 31
-        versionCode 1
-        versionName "1.0.0"
+        versionCode findProperty("versionCode") ? (findProperty("versionCode") as int) : 1
+        versionName findProperty("versionName") ?: "1.0.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
+        debug {
+            signingConfig findProperty("signDebug") ? signingConfigs.config : signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig findProperty("signRelease") ? signingConfigs.config : null
         }
     }
     compileOptions {
