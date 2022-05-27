@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - v*
 
 jobs:
   build:
@@ -19,29 +21,51 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Setup keystore
+    - name: Setup signing configuration
       run: |
+        # Prepare signing config
         KEYSTORE_DIR="${RUNNER_TEMP}/keystore/"
         KEYSTORE_FILE="${KEYSTORE_DIR}/keystore.jks"
         
+        # Decode the keystore file
         mkdir "${KEYSTORE_DIR}"
         echo "${KEYSTORE_FILE_BASE64}" | base64 -d > "${KEYSTORE_FILE}"
         
+        # Create keystore.properties file
         echo > ./keystore.properties
         echo "storeFile=${KEYSTORE_FILE}" >> ./keystore.properties
         echo "storePassword=${KEYSTORE_PASSWORD}" >> ./keystore.properties
         echo "keyAlias=${KEY_ALIAS}" >> ./keystore.properties
         echo "keyPassword=${KEY_PASSWORD}" >> ./keystore.properties
+        
+        # Setup arguments to pass while building for signing
+        echo "SIGNING_ARGS=-PsignDebug=1 -PsignRelease=1" >> $GITHUB_ENV
       env:
         KEYSTORE_FILE_BASE64: ${{ secrets.KEYSTORE_FILE_BASE64 }}
         KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
+    - name: Setup CI version info
+      if: github.ref == 'refs/heads/main'
+      run: |
+        VERSION_CODE=$GITHUB_RUN_NUMBER
+        VERSION_NAME=$(date "+%Y%0m%0d").${VERSION_CODE}-ci
+        
+        echo "VERSION_ARGS=-PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME" >> $GITHUB_ENV
+
+    - name: Setup release version info
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        VERSION_CODE=$GITHUB_RUN_NUMBER
+        VERSION_NAME=${GITHUB_REF_NAME:1}
+        
+        echo "VERSION_ARGS=-PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME" >> $GITHUB_ENV
+
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
     - name: Build with Gradle
-      run: ./gradlew build -PsignDebug=1 -PsignRelease=1
+      run: ./gradlew build $SIGNING_ARGS $VERSION_ARGS
 
     - name: Upload outputs
       uses: actions/upload-artifact@v3.0.0
