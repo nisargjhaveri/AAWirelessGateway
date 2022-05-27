@@ -50,7 +50,7 @@ jobs:
       if: github.ref == 'refs/heads/main'
       run: |
         VERSION_CODE=$GITHUB_RUN_NUMBER
-        VERSION_NAME=$(date "+%Y%0m%0d").${VERSION_CODE}-ci
+        VERSION_NAME=0.$(date "+%Y%0m%0d").${VERSION_CODE}-alpha
         
         echo "VERSION_ARGS=-PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME" >> $GITHUB_ENV
 
