@@ -33,7 +33,6 @@ class AAGatewayService : Service() {
     private var mRunning = false
 
     private var mAccessory: UsbAccessory? = null
-    private var mUSBFileDescriptor: ParcelFileDescriptor? = null
 
     private var mPhoneInputStream: FileInputStream? = null
     private var mPhoneOutputStream: FileOutputStream? = null
@@ -92,17 +91,6 @@ class AAGatewayService : Service() {
         mAccessory = intent?.getParcelableExtra(UsbManager.EXTRA_ACCESSORY) as UsbAccessory?
         if (mAccessory == null) {
             Log.e(LOG_TAG, "No USB accessory found")
-            stopService()
-            return START_REDELIVER_INTENT
-        }
-
-        mUSBFileDescriptor = mUsbManager.openAccessory(mAccessory)
-        if (mUSBFileDescriptor != null) {
-            val fd = mUSBFileDescriptor?.fileDescriptor
-            mPhoneInputStream = FileInputStream(fd)
-            mPhoneOutputStream = FileOutputStream(fd)
-        } else {
-            Log.e(LOG_TAG, "Cannot open USB accessory")
             stopService()
             return START_REDELIVER_INTENT
         }
@@ -169,11 +157,15 @@ class AAGatewayService : Service() {
         stopService()
     }
 
-    private fun stopService() {
+    private fun stopHotspot() {
         if (mHotspotStarted) {
             mWifiHotspotHandler.stop()
             mHotspotStarted = false
         }
+    }
+
+    private fun stopService() {
+        stopHotspot()
 
         stopForeground(true)
         stopSelf()
@@ -238,17 +230,6 @@ class AAGatewayService : Service() {
         override fun run() {
             super.run()
 
-            if (mPhoneInputStream == null || mPhoneOutputStream == null) {
-                stopRunning("Error initializing USB")
-                return
-            }
-
-            val phoneInputStream = mPhoneInputStream!!
-
-            if (isRunning()) {
-                mUsbComplete = true
-            }
-
             if (isRunning() && !mLocalComplete) {
                 updateNotification("Waiting for TCP")
             }
@@ -260,6 +241,26 @@ class AAGatewayService : Service() {
                     Log.e(LOG_TAG, "usb - error sleeping: ${e.message}")
                 }
             }
+
+            var usbFileDescriptor: ParcelFileDescriptor? = null
+
+            if (isRunning()) {
+                usbFileDescriptor = mUsbManager.openAccessory(mAccessory)?.also {
+                    val fd = it.fileDescriptor
+                    mPhoneInputStream = FileInputStream(fd)
+                    mPhoneOutputStream = FileOutputStream(fd)
+                }
+
+                if (usbFileDescriptor == null || mPhoneInputStream == null || mPhoneOutputStream == null) {
+                    stopRunning("Error initializing USB")
+                }
+            }
+
+            if (isRunning()) {
+                mUsbComplete = true
+            }
+
+            val phoneInputStream = mPhoneInputStream!!
 
             val buffer = ByteArray(16384)
             while (isRunning())
@@ -277,7 +278,7 @@ class AAGatewayService : Service() {
                 }
             }
 
-            mUSBFileDescriptor?.apply {
+            usbFileDescriptor?.apply {
                 try {
                     close()
                 } catch (e: IOException) {
@@ -326,7 +327,7 @@ class AAGatewayService : Service() {
                     mSocketInputStream = DataInputStream(it.getInputStream())
                 }
 
-                updateNotification("Connected!")
+                Log.i(LOG_TAG, "TCP connected")
             }
             catch (e: SocketTimeoutException) {
                 stopRunning("Wireless client did not connect")
@@ -355,6 +356,8 @@ class AAGatewayService : Service() {
                     Log.e(LOG_TAG, "tcp - error sleeping ${e.message}")
                 }
             }
+
+            updateNotification("Connected!")
 
             val buffer = ByteArray(16384)
             while (isRunning()) {
