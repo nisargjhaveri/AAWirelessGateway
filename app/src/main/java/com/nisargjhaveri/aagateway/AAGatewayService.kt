@@ -136,10 +136,10 @@ class AAGatewayService : Service() {
             updateNotification("Initial Handshake done")
         }
         else {
-            mMainHandlerThread.cancel()
+            stopRunning("Handshake failed or rejected")
 
             if (success) {
-                Log.d(LOG_TAG, "Connection was rejected with reason $rejectReason")
+                Log.i(LOG_TAG, "Connection was rejected with reason $rejectReason")
             }
         }
     }
@@ -177,6 +177,8 @@ class AAGatewayService : Service() {
             updateNotification("Stopping wireless connection")
         }
 
+        mMainHandlerThread.cancel()
+
         Log.i(LOG_TAG, msg)
     }
 
@@ -198,8 +200,6 @@ class AAGatewayService : Service() {
         private val mTcpControlThread = TCPControlThread()
 
         fun cancel() {
-            stopRunning("Cancelled")
-
             mUsbThread.cancel()
             mTcpThread.cancel()
             mTcpControlThread.cancel()
@@ -260,21 +260,21 @@ class AAGatewayService : Service() {
                 mUsbComplete = true
             }
 
-            val phoneInputStream = mPhoneInputStream!!
+            if (isRunning()) {
+                val phoneInputStream = mPhoneInputStream!!
 
-            val buffer = ByteArray(16384)
-            while (isRunning())
-            {
-                try {
-                    val len = phoneInputStream.read(buffer)
-                    mSocketOutputStream?.write(buffer.copyOf(len))
+                val buffer = ByteArray(16384)
+                while (isRunning()) {
+                    try {
+                        val len = phoneInputStream.read(buffer)
+                        mSocketOutputStream?.write(buffer.copyOf(len))
 
-                    if (mLogCommunication) Log.v(LOG_TAG, "USB read: ${buffer.copyOf(len).toHex()}")
-                }
-                catch (e: Exception)
-                {
-                    Log.e(LOG_TAG,"usb - error in main loop: ${e.message}")
-                    stopRunning("Error in USB main loop")
+                        if (mLogCommunication) Log.v(LOG_TAG, "USB read: ${buffer.copyOf(len).toHex()}")
+                    }
+                    catch (e: Exception) {
+                        Log.e(LOG_TAG, "usb - error in main loop: ${e.message}")
+                        stopRunning("Error in USB main loop")
+                    }
                 }
             }
 
@@ -293,17 +293,22 @@ class AAGatewayService : Service() {
 
     private inner class TCPPollThread: Thread() {
         var mServerSocket: ServerSocket? = null
+        var mSocket: Socket? = null
 
         fun cancel() {
             mServerSocket?.runCatching {
                 close()
             }
+            mServerSocket = null
+
+            mSocket?.runCatching {
+                close()
+            }
+            mSocket = null
         }
 
         override fun run() {
             super.run()
-
-            var socket: Socket? = null
 
             try {
                 mServerSocket = ServerSocket(5288, 5).apply {
@@ -312,7 +317,7 @@ class AAGatewayService : Service() {
                 }
 
                 mServerSocket?.let {
-                    socket = it.accept().apply {
+                    mSocket = it.accept().apply {
                         soTimeout = 10000
                     }
                 }
@@ -322,7 +327,7 @@ class AAGatewayService : Service() {
                 }
                 mServerSocket = null
 
-                socket?.also {
+                mSocket?.also {
                     mSocketOutputStream = it.getOutputStream()
                     mSocketInputStream = DataInputStream(it.getInputStream())
                 }
@@ -337,7 +342,7 @@ class AAGatewayService : Service() {
                 stopRunning("Error initializing TCP")
             }
 
-            if (isRunning() && socket == null) {
+            if (isRunning() && mSocket == null) {
                 stopRunning("Error connecting to wireless client")
             }
 
@@ -357,7 +362,9 @@ class AAGatewayService : Service() {
                 }
             }
 
-            updateNotification("Connected!")
+            if (isRunning()) {
+                updateNotification("Connected!")
+            }
 
             val buffer = ByteArray(16384)
             while (isRunning()) {
@@ -383,7 +390,7 @@ class AAGatewayService : Service() {
                 }
             }
 
-            socket?.apply {
+            mSocket?.apply {
                 try {
                     close()
                 } catch (e: IOException) {
@@ -402,6 +409,7 @@ class AAGatewayService : Service() {
             mServerSocket?.runCatching {
                 close()
             }
+            mServerSocket = null
         }
 
         override fun run() {
