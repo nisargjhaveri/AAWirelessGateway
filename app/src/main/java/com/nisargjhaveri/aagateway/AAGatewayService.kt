@@ -116,7 +116,7 @@ class AAGatewayService : Service() {
 
                     updateNotification("Waiting for wireless client")
                     mBluetoothHandler.connectDevice(address) { msg ->
-                        Log.d(LOG_TAG, msg)
+                        Log.d(LOG_TAG, "Bluetooth: $msg")
                     }
 
                     mMainHandlerThread.start()
@@ -159,6 +159,7 @@ class AAGatewayService : Service() {
 
     private fun stopHotspot() {
         if (mHotspotStarted) {
+            Log.i(LOG_TAG, "Stopping wifi hotspot")
             mWifiHotspotHandler.stop()
             mHotspotStarted = false
         }
@@ -172,14 +173,14 @@ class AAGatewayService : Service() {
     }
 
     private fun stopRunning(msg: String) {
+        Log.i(LOG_TAG, msg)
+
         if (mRunning) {
             mRunning = false
             updateNotification("Stopping wireless connection")
         }
 
         mMainHandlerThread.cancel()
-
-        Log.i(LOG_TAG, msg)
     }
 
     private fun isRunning() = mRunning
