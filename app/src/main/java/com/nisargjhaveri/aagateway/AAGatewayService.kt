@@ -267,13 +267,25 @@ class AAGatewayService : Service() {
                 val buffer = ByteArray(16384)
                 while (isRunning()) {
                     try {
-                        val len = phoneInputStream.read(buffer)
-                        mSocketOutputStream?.write(buffer.copyOf(len))
+                        val len: Int
+                        try {
+                            len = phoneInputStream.read(buffer)
+                            if (mLogCommunication) Log.v(LOG_TAG, "USB read: ${buffer.copyOf(len).toHex()}")
+                        }
+                        catch (e: Exception) {
+                            Log.e(LOG_TAG, "usb main loop - usb read error: ${e.message}")
+                            throw e
+                        }
 
-                        if (mLogCommunication) Log.v(LOG_TAG, "USB read: ${buffer.copyOf(len).toHex()}")
+                        try {
+                            mSocketOutputStream?.write(buffer.copyOf(len))
+                        }
+                        catch (e: Exception) {
+                            Log.e(LOG_TAG, "usb main loop - tcp write error: ${e.message}")
+                            throw e
+                        }
                     }
                     catch (e: Exception) {
-                        Log.e(LOG_TAG, "usb - error in main loop: ${e.message}")
                         stopRunning("Error in USB main loop")
                     }
                 }
@@ -371,22 +383,34 @@ class AAGatewayService : Service() {
             while (isRunning()) {
                 try {
                     var pos = 4
+                    val encLen: Int
+                    try {
+                        mSocketInputStream?.readFully(buffer, 0, 4)
+                        if (buffer[1].toInt() == 9) //Flag 9 means the header is 8 bytes long (read four more bytes separately)
+                        {
+                            pos += 4
+                            mSocketInputStream?.readFully(buffer, 4, 4)
+                        }
 
-                    mSocketInputStream?.readFully(buffer, 0, 4)
-                    if (buffer[1].toInt() == 9) //Flag 9 means the header is 8 bytes long (read four more bytes separately)
-                    {
-                        pos += 4
-                        mSocketInputStream?.readFully(buffer, 4, 4)
+                        encLen = ((buffer[2].toInt() and 0xFF) shl 8) or (buffer[3].toInt() and 0xFF)
+
+                        mSocketInputStream?.readFully(buffer, pos, encLen)
+
+                        if (mLogCommunication) Log.v(LOG_TAG, "TCP read: ${buffer.copyOf(encLen + pos).toHex()}")
+                    }
+                    catch (e: Exception) {
+                        Log.e(LOG_TAG, "tcp main loop - tcp read error: ${e.message}")
+                        throw e
                     }
 
-                    val encLen: Int = ((buffer[2].toInt() and 0xFF) shl 8) or (buffer[3].toInt() and 0xFF)
-
-                    mSocketInputStream?.readFully(buffer, pos, encLen)
-                    mPhoneOutputStream?.write(buffer.copyOf(encLen + pos))
-
-                    if (mLogCommunication) Log.v(LOG_TAG, "TCP read: ${buffer.copyOf(encLen + pos).toHex()}")
-                } catch (e: java.lang.Exception) {
-                    Log.e(LOG_TAG, "tcp - error in main loop: ${e.message}")
+                    try {
+                        mPhoneOutputStream?.write(buffer.copyOf(encLen + pos))
+                    }
+                    catch (e: Exception) {
+                        Log.e(LOG_TAG, "tcp main loop - usb write error: ${e.message}")
+                        throw e
+                    }
+                } catch (e: Exception) {
                     stopRunning("Error in TCP main loop")
                 }
             }
