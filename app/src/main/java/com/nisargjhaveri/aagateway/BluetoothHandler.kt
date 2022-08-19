@@ -1,10 +1,7 @@
 package com.nisargjhaveri.aagateway
 
 import android.Manifest
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothSocket
+import android.bluetooth.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -115,7 +112,6 @@ class BluetoothHandler (context: Context, activityResultCaller: ActivityResultCa
         var mDevice = device
 
         override fun run() {
-            log("Inside connect thread")
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && mContext.checkSelfPermission(
                     Manifest.permission.BLUETOOTH_CONNECT
                 ) != PackageManager.PERMISSION_GRANTED
@@ -126,23 +122,15 @@ class BluetoothHandler (context: Context, activityResultCaller: ActivityResultCa
             mmSocket = mDevice.createRfcommSocketToServiceRecord(UUID.fromString("2b12becb-c5c0-4370-b19c-0917c72e852c"))
 
             mmSocket?.let { socket ->
-                // Connect to the remote device through the socket. This call blocks
-                // until it succeeds or throws an exception.
-//                var connected = false
-//                while (!connected) {
-                    try {
-                        socket.connect()
-//                        connected = true
-                        log("BT Connection successful")
-                    } catch (e: IOException) {
-//                        sleep(100)
-//                        log("Connection failed. Retrying")
-                        log("BT Connection failed")
-                    }
-//                }
+                // Connect to the remote device through the socket.
+                try {
+                    socket.connect()
+                    log("BT Connection successful")
+                } catch (e: IOException) {
+                    log("BT Connection failed")
+                }
             }
 
-//            log("Read: " + mmSocket?.inputStream?.read())
             mmSocket?.close()
         }
 
@@ -156,47 +144,4 @@ class BluetoothHandler (context: Context, activityResultCaller: ActivityResultCa
         }
     }
 
-//    private inner class AcceptThread : Thread() {
-//        private var mmServerSocket : BluetoothServerSocket? = null
-//        private var mmSocket : BluetoothSocket? = null
-//
-//        override fun run() {
-//            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && mContext.checkSelfPermission(
-//                    Manifest.permission.BLUETOOTH_CONNECT
-//                ) != PackageManager.PERMISSION_GRANTED
-//            ) {
-//                return
-//            }
-//
-//            mmServerSocket = mBluetoothAdapter?.listenUsingInsecureRfcommWithServiceRecord("BT", UUID.fromString("2b12becb-c5c0-4370-b19c-0917c72e852c"))
-//
-//            // Keep listening until exception occurs or a socket is returned.
-//            var shouldLoop = true
-//            while (shouldLoop) {
-//                mmSocket = try {
-//                    mmServerSocket?.accept()
-//                } catch (e: IOException) {
-//                    shouldLoop = false
-//                    null
-//                }
-//                mmSocket?.also {
-//                    mmServerSocket?.close()
-//
-//                    it.outputStream?.write(5)
-//                    it.outputStream?.flush()
-//                    shouldLoop = false
-//                    it.close()
-//                }
-//            }
-//        }
-//
-//        // Closes the connect socket and causes the thread to finish.
-//        fun cancel() {
-//            try {
-//                mmServerSocket?.close()
-//            } catch (e: IOException) {
-////                Log.e(TAG, "Could not close the connect socket", e)
-//            }
-//        }
-//    }
 }

@@ -112,6 +112,14 @@ class SettingsFragment : PreferenceFragmentCompat() {
             }
         }
 
+        findPreference<EditTextPreference>("hotspot_password")?.apply {
+            setSummaryProvider {
+                val length = (it as? EditTextPreference)?.text?.length ?: 0
+
+                if (length > 0) "*".repeat(length) else "Not set"
+            }
+        }
+
         context?.also {
             updateSettingsState(it)
         }

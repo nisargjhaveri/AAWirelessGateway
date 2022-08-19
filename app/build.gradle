@@ -1,6 +1,7 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
+    id 'com.google.protobuf' version '0.8.19'
 }
 
 def keystoreProperties = new Properties()
@@ -60,4 +61,21 @@ dependencies {
 
     implementation 'com.linkedin.dexmaker:dexmaker:2.28.1'
     implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:4.3'
+
+    implementation 'com.google.protobuf:protobuf-javalite:3.8.0'
+}
+
+protobuf {
+    protoc {
+        artifact = 'com.google.protobuf:protoc:3.8.0'
+    }
+    generateProtoTasks {
+        all().each { task ->
+            task.builtins {
+                java {
+                    option "lite"
+                }
+            }
+        }
+    }
 }

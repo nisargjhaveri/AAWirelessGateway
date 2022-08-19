@@ -24,8 +24,8 @@ class AAGatewayService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "default"
         private const val NOTIFICATION_ID = 1
 
-        private const val DEFAULT_HANDSHAKE_TIMEOUT = 60
-        private const val DEFAULT_CONNECTION_TIMEOUT = 180
+        private const val DEFAULT_HANDSHAKE_TIMEOUT = 15
+        private const val DEFAULT_CONNECTION_TIMEOUT = 60
     }
 
     private var mLogCommunication = false
@@ -44,6 +44,7 @@ class AAGatewayService : Service() {
     private var mLocalComplete = false
     private var mHotspotStarted = false
 
+    private var mNativeConnectionFlow = true
     private var mUsbFallback = false
     private var mClientHandshakeTimeout = DEFAULT_HANDSHAKE_TIMEOUT
     private var mClientConnectionTimeout = DEFAULT_CONNECTION_TIMEOUT
@@ -54,6 +55,7 @@ class AAGatewayService : Service() {
 
     private val mWifiHotspotHandler: WifiHotspotHandler by lazy { WifiHotspotHandler(this) }
     private val mBluetoothHandler: BluetoothHandler by lazy { BluetoothHandler(this, null) }
+    private val mAABluetoothProfileHandler: AABluetoothProfileHandler by lazy { AABluetoothProfileHandler(this) }
 
     override fun onCreate() {
         super.onCreate()
@@ -104,19 +106,32 @@ class AAGatewayService : Service() {
         val preferences = PreferenceManager.getDefaultSharedPreferences(this)
         val clientAddress = preferences.getString("client_bt_mac", null)
 
+        mNativeConnectionFlow = preferences.getBoolean("native_connection_flow", true)
         mUsbFallback = preferences.getBoolean("usb_fallback", false)
-        mClientHandshakeTimeout = if (mUsbFallback) { preferences.getInt("client_handshake_timeout", 15) } else { DEFAULT_HANDSHAKE_TIMEOUT }
-        mClientConnectionTimeout = if (mUsbFallback) { preferences.getInt("client_connection_timeout", 60) } else { DEFAULT_CONNECTION_TIMEOUT }
+        mClientHandshakeTimeout = preferences.getInt("client_handshake_timeout", 15)
+        mClientConnectionTimeout = preferences.getInt("client_connection_timeout", 60)
+
+        val hotspotSsid = preferences.getString("hotspot_ssid", null) ?: ""
+        val hotspotPassphrase = preferences.getString("hotspot_password", null) ?: ""
+        val hotspotBssid = preferences.getString("hotspot_bssid", null)?.ifEmpty { null }
 
         clientAddress?.also { address ->
             updateNotification("Starting wifi hotspot")
-            mWifiHotspotHandler.start { wifiSuccess ->
+            mWifiHotspotHandler.start(hotspotSsid, hotspotPassphrase, hotspotBssid) { wifiSuccess, wifiHotspotInfo ->
                 if (wifiSuccess) {
                     mHotspotStarted = true
 
                     updateNotification("Waiting for wireless client")
-                    mBluetoothHandler.connectDevice(address) { msg ->
-                        Log.d(LOG_TAG, "Bluetooth: $msg")
+
+                    if (mNativeConnectionFlow) {
+                        mAABluetoothProfileHandler.connectDevice(address, mClientHandshakeTimeout * 1000L, wifiHotspotInfo!!) { success ->
+                            onInitialHandshake(success, 0)
+                        }
+                    }
+                    else {
+                        mBluetoothHandler.connectDevice(address) { msg ->
+                            Log.d(LOG_TAG, "Bluetooth: $msg")
+                        }
                     }
 
                     mMainHandlerThread.start()
@@ -136,7 +151,12 @@ class AAGatewayService : Service() {
             updateNotification("Initial Handshake done")
         }
         else {
-            stopRunning("Handshake failed or rejected")
+            if (!mLocalComplete) {
+                stopRunning("Handshake failed or rejected")
+            }
+            else {
+                Log.i(LOG_TAG, "Handshake failed or rejected, but tcp is already connected. Ignoring.")
+            }
 
             if (success) {
                 Log.i(LOG_TAG, "Connection was rejected with reason $rejectReason")
@@ -144,7 +164,13 @@ class AAGatewayService : Service() {
         }
     }
 
+    private fun onLocalComplete() {
+        mAABluetoothProfileHandler.cleanup()
+    }
+
     private fun onMainHandlerThreadStopped() {
+        mAABluetoothProfileHandler.cleanup()
+
         if (!mLocalComplete && mUsbFallback) {
             mAccessory?.let {
                 updateNotification("Starting USB Android Auto")
@@ -212,7 +238,9 @@ class AAGatewayService : Service() {
             mUsbThread.start()
             mTcpThread.start()
 
-            mTcpControlThread.start()
+            if (!mNativeConnectionFlow) {
+                mTcpControlThread.start()
+            }
 
             mUsbThread.join()
             mTcpThread.join()
@@ -361,6 +389,7 @@ class AAGatewayService : Service() {
 
             if (isRunning()) {
                 mLocalComplete = true
+                onLocalComplete()
             }
 
             if (isRunning() && !mUsbComplete) {

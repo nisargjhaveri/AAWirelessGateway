@@ -4,89 +4,132 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.net.*
-import android.net.wifi.WifiConfiguration
-import android.net.wifi.WifiManager
-import android.os.Build
 import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import androidx.annotation.RequiresPermission
 import com.android.dx.stock.ProxyBuilder
+import java.lang.RuntimeException
 import java.lang.reflect.Method
+import java.net.NetworkInterface
 
+data class WifiHotspotInfo(
+    var ssid: String,
+    var passphrase: String,
+    var bssid: String?,
+    var ipAddress: String,
+    var securityMode: WifiInfoRequestOuterClass.SecurityMode,
+    var accessPointType: WifiInfoRequestOuterClass.AccessPointType,
+)
 
 // Based on https://github.com/aegis1980/WifiHotSpot/
 class WifiHotspotHandler(context: Context) {
+    companion object {
+        private const val LOG_TAG = "AAService"
+    }
+
     private val TETHERING_WIFI = 0
     private val mContext = context
 
     private val mConnectivityManager: ConnectivityManager by lazy { mContext.applicationContext.getSystemService(ConnectivityManager::class.java) }
-    private val mWifiManager: WifiManager by lazy { mContext.getSystemService(WifiManager::class.java) }
 
-    private var mWasWifiEnabled = false
+    private lateinit var mSsid: String
+    private lateinit var mPassphrase: String
+    private var mBssid: String? = null
+
+    private fun log(message: String) {
+        Log.d(LOG_TAG, "Hotspot: $message")
+    }
+
+    private fun logError(message: String) {
+        Log.e(LOG_TAG, "Hotspot: $message")
+    }
 
     @RequiresPermission(Manifest.permission.ACCESS_NETWORK_STATE)
     fun isTethered(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O){
-            isTetherActive()
-        } else {
-            isTetherActivePreOreo()
-        }
+        return isTetherActive()
     }
 
     @RequiresPermission(Manifest.permission.WRITE_SETTINGS)
-    fun start(callback: (success: Boolean) -> Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O){
-            if (!startTethering(callback)) {
-                callback.invoke(false)
-            }
-        } else {
-            callback.invoke(handleHotspotPreOreo(true))
+    fun start(ssid: String, passphrase: String, bssid: String?, callback: (success: Boolean, wifiHotspotInfo: WifiHotspotInfo?) -> Unit) {
+        mSsid = ssid
+        mPassphrase = passphrase
+        mBssid = bssid
+
+        log("Starting hotspot")
+
+        if (!startTethering(callback)) {
+            callback.invoke(false, null)
         }
     }
 
     fun stop() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O){
-            stopTethering()
-        } else {
-            handleHotspotPreOreo(false)
-        }
+        stopTethering()
     }
 
-    private fun isTetherActivePreOreo(): Boolean {
-        val method: Method? = mWifiManager.javaClass.getDeclaredMethod("isWifiApEnabled")
-        return method?.invoke(mWifiManager) as Boolean
+    private fun getWifiHotspotInfo(): WifiHotspotInfo {
+        log("Gathering Wifi Hotspot Info")
+
+        val wifiHotspotInfo = WifiHotspotInfo(
+            mSsid,
+            mPassphrase,
+            mBssid,
+            "192.168.43.1",
+            WifiInfoRequestOuterClass.SecurityMode.WPA2_PERSONAL,
+            WifiInfoRequestOuterClass.AccessPointType.DYNAMIC
+        )
+
+        populateWifiHotspotAddresses(wifiHotspotInfo);
+
+        return wifiHotspotInfo
     }
 
-    private fun handleHotspotPreOreo(start: Boolean): Boolean {
-        val method: Method? = mWifiManager.javaClass.getDeclaredMethod("setWifiApEnabled", WifiConfiguration::class.java, Boolean::class.javaPrimitiveType)
-        method?.also { method ->
-            try {
-                if (start) {
-                    if (mWifiManager.isWifiEnabled) {
-                        mWasWifiEnabled = true
-                        mWifiManager.setWifiEnabled(false)
-                    }
+    private fun populateWifiHotspotAddresses(wifiHotspotInfo: WifiHotspotInfo) {
+        val ifaces = getTetheredIfaces() as Array<String>
 
-                    method.invoke(mWifiManager, null, true) // Activate tethering
+        var fallbackIpAddress: String? = null
+        var fallbackHwAddress: String? = null
 
-                    return true
-                }
-                else {
-                    method.invoke(mWifiManager, null, false) // Deactivate tethering
+        val networkInterfaces = NetworkInterface.getNetworkInterfaces()
+        for (networkInterface in networkInterfaces) {
+            var ipAddress: String? = null
 
-                    if (mWasWifiEnabled) {
-                        mWifiManager.setWifiEnabled(true)
-                    }
+            val hwAddress = networkInterface.hardwareAddress?.joinToString(":") { byte ->
+                String.format("%02X", byte)
+            }
 
-                    return true
+            for (inetAddress in networkInterface.inetAddresses) {
+                if (inetAddress.isSiteLocalAddress) {
+                    ipAddress = inetAddress.hostAddress
+
+                    fallbackIpAddress = ipAddress
+                    fallbackHwAddress = hwAddress
                 }
             }
-            catch (e: Exception) {
-                e.printStackTrace()
-                return false
+
+            if (ifaces.any { it.equals(networkInterface.name, true) }) {
+                log("Found tethered interface ${networkInterface.name}")
+
+                ipAddress?.let { ipAddr ->
+                    log("Using ip $ipAddr from interface ${networkInterface.name}")
+                    wifiHotspotInfo.ipAddress = ipAddr
+
+                    hwAddress?.let { hwAddr ->
+                        log("Using bssid $hwAddr from interface ${networkInterface.name}")
+                        wifiHotspotInfo.bssid = hwAddress
+                    }
+
+                    return
+                }
             }
         }
 
-        return false
+        wifiHotspotInfo.ipAddress = fallbackIpAddress ?: wifiHotspotInfo.ipAddress
+        wifiHotspotInfo.bssid = fallbackHwAddress ?: wifiHotspotInfo.bssid
+
+        log("Falling back to ip = ${wifiHotspotInfo.ipAddress} and bssid = ${wifiHotspotInfo.bssid}")
+
+        return
     }
 
     /**
@@ -98,24 +141,41 @@ class WifiHotspotHandler(context: Context) {
      */
     @SuppressLint("DiscouragedPrivateApi")
     private fun isTetherActive(): Boolean {
+        val res = getTetheredIfaces()
+
+        if (res.isNotEmpty()) {
+            return true
+        }
+
+        return false
+    }
+
+    @SuppressLint("DiscouragedPrivateApi")
+    private fun getTetheredIfaces(): Array<*> {
         try {
             val method: Method? = mConnectivityManager.javaClass.getDeclaredMethod("getTetheredIfaces")
             if (method == null) {
-//                Log.e(TAG, "getTetheredIfaces is null")
+                throw RuntimeException("Cannot find getTetheredIfaces method in ConnectivityManager")
             }
             else {
-                val res = method.invoke(mConnectivityManager) as Array<*>
-//                Log.d(TAG, "getTetheredIfaces invoked")
-//                Log.d(TAG, Arrays.toString(res))
-                if (res.isNotEmpty()) {
-                    return true
-                }
+                return method.invoke(mConnectivityManager) as Array<*>
             }
         } catch (e: java.lang.Exception) {
-//            Log.e(TAG, "Error in getTetheredIfaces")
             e.printStackTrace()
         }
-        return false
+
+        return arrayOf<String>();
+    }
+
+    private fun callbackOnceTetherActive(callback: (success: Boolean, wifiHotspotInfo: WifiHotspotInfo?) -> Unit) {
+        if (isTetherActive()) {
+            callback(true, getWifiHotspotInfo())
+        }
+        else {
+            Handler(Looper.getMainLooper()).postDelayed({
+                callbackOnceTetherActive(callback)
+            }, 500)
+        }
     }
 
     /**
@@ -123,12 +183,12 @@ class WifiHotspotHandler(context: Context) {
      * Does not require app to have system/privileged access
      * Credit: Vishal Sharma - https://stackoverflow.com/a/52219887
      */
-    private fun startTethering(callback: (success: Boolean) -> Unit): Boolean {
+    private fun startTethering(callback: (success: Boolean, wifiHotspotInfo: WifiHotspotInfo?) -> Unit): Boolean {
         // On Pie if we try to start tethering while it is already on, it will
         // be disabled. This is needed when startTethering() is called programmatically.
         if (isTetherActive()) {
-//            Log.d(TAG, "Tether already active, returning")
-            callback.invoke(true)
+            log("Tether already active, nothing to do")
+            callback.invoke(true, getWifiHotspotInfo())
             return true
         }
 
@@ -137,14 +197,13 @@ class WifiHotspotHandler(context: Context) {
             ProxyBuilder.forClass(getOnStartTetheringCallbackClass())
                 .dexCache(outputDir).handler { proxy, method, args ->
                     when (method.name) {
-                        "onTetheringStarted" -> callback(true)
-                        "onTetheringFailed" -> callback(false)
+                        "onTetheringStarted" -> callbackOnceTetherActive(callback)
+                        "onTetheringFailed" -> callback(false, null)
                         else -> ProxyBuilder.callSuper(proxy, method, args)
                     }
                     null
                 }.build()
         } catch (e: java.lang.Exception) {
-//            Log.e(TAG, "Error in enableTethering ProxyBuilder")
             e.printStackTrace()
             return false
         }
@@ -157,7 +216,7 @@ class WifiHotspotHandler(context: Context) {
                 Handler::class.java
             )
             if (method == null) {
-//                Log.e(TAG, "startTetheringMethod is null")
+                throw RuntimeException("Cannot find startTetheringMethod method in ConnectivityManager")
             } else {
                 method.invoke(
                     mConnectivityManager,
@@ -166,11 +225,9 @@ class WifiHotspotHandler(context: Context) {
                     proxy,
                     null
                 )
-//                Log.d(TAG, "startTethering invoked")
             }
             return true
         } catch (e: java.lang.Exception) {
-//            Log.e(TAG, "Error in enableTethering")
             e.printStackTrace()
         }
         return false
@@ -183,13 +240,11 @@ class WifiHotspotHandler(context: Context) {
                 Int::class.javaPrimitiveType
             )
             if (method == null) {
-//                Log.e(TAG, "stopTetheringMethod is null")
+                throw RuntimeException("Cannot find stopTetheringMethod method in ConnectivityManager")
             } else {
                 method.invoke(mConnectivityManager, TETHERING_WIFI)
-//                Log.d(TAG, "stopTethering invoked")
             }
         } catch (e: java.lang.Exception) {
-//            Log.e(TAG, "stopTethering error: $e")
             e.printStackTrace()
         }
     }
@@ -199,7 +254,6 @@ class WifiHotspotHandler(context: Context) {
         try {
             return Class.forName("android.net.ConnectivityManager\$OnStartTetheringCallback")
         } catch (e: ClassNotFoundException) {
-//            Log.e(TAG, "OnStartTetheringCallbackClass error: $e")
             e.printStackTrace()
         }
         return null

@@ -59,6 +59,29 @@
             app:useSimpleSummaryProvider="true" />
 
         <SwitchPreferenceCompat
+            app:key="native_connection_flow"
+            app:title="Native AA connection"
+            app:summary="Use native Wireless Android Auto connection flow."
+            app:defaultValue="true" />
+
+        <EditTextPreference
+            app:key="hotspot_ssid"
+            app:title="Hotspot SSID"
+            app:useSimpleSummaryProvider="true"
+            app:dependency="native_connection_flow" />
+
+        <EditTextPreference
+            app:key="hotspot_password"
+            app:title="Hotspot password"
+            app:dependency="native_connection_flow" />
+
+        <EditTextPreference
+            app:key="hotspot_bssid"
+            app:title="Hotspot BSSID"
+            app:useSimpleSummaryProvider="true"
+            app:dependency="native_connection_flow" />
+
+        <SwitchPreferenceCompat
             app:key="usb_fallback"
             app:title="Fallback to USB Android Auto" />
 
@@ -68,8 +91,7 @@
             app:min="5"
             android:max="60"
             app:defaultValue="15"
-            app:showSeekBarValue="true"
-            app:dependency="usb_fallback" />
+            app:showSeekBarValue="true" />
 
         <SeekBarPreference
             app:key="client_connection_timeout"
@@ -77,8 +99,7 @@
             app:min="15"
             android:max="180"
             app:defaultValue="60"
-            app:showSeekBarValue="true"
-            app:dependency="usb_fallback" />
+            app:showSeekBarValue="true" />
     </PreferenceCategory>
 
     <PreferenceCategory app:title="Common settings">
