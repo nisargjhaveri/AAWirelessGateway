@@ -89,6 +89,33 @@ class AABluetoothProfileHandler (context: Context) {
         socket.outputStream.write(sendBuffer.array())
     }
 
+    fun read(socket: BluetoothSocket): Triple<Short, Short, ByteBuffer> {
+        val byteArray = ByteArray(1024)
+        socket.inputStream.read(byteArray)
+
+        val readBuffer = ByteBuffer.wrap(byteArray)
+        val length = readBuffer.short
+        val s = readBuffer.short
+
+        val data = ByteArray(length.toInt())
+        readBuffer.get(data)
+
+        val name = when (s.toInt()) {
+            1 -> "WifiStartRequest"
+            2 -> "WifiInfoRequest"
+            3 -> "WifiInfoResponse"
+            4 -> "WifiVersionRequest"
+            5 -> "WifiVersionResponse"
+            6 -> "WifiConnectStatus"
+            7 -> "WifiStartResponse"
+            else -> "UNKNOWN"
+        }
+
+        log("Read $name. length: $length, s: $s, data: ${data.toHex()}")
+
+        return Triple(length, s, ByteBuffer.wrap(data))
+    }
+
     private inner class AAConnectThread(device: BluetoothDevice, timeout: Long) : Thread() {
         var mmSocket: BluetoothSocket? = null
         var mDevice = device
@@ -172,18 +199,18 @@ class AABluetoothProfileHandler (context: Context) {
                     send(socket, getWifiStartRequest().toByteArray(), 1)
                     log("Sent WifiStartRequest")
 
-                    val byteArray = ByteArray(1024)
-                    socket.inputStream.read(byteArray)
-
-                    val readBuffer = ByteBuffer.wrap(byteArray)
-                    val length = readBuffer.short
-                    val s = readBuffer.short
-                    log("Read WifiStartRequest response. length: $length, s: $s")
+                    val (_, s, _) = read(socket)
 
                     if (s == 2.toShort()) {
                         send(socket, getWifiInfoRequest().toByteArray(), 3)
-                        log("Sent WifiInfoRequest")
+                        log("Sent WifiInfoResponse")
+                    } else {
+                        log("Expected WifiInfoRequest (s = 2), got s = $s")
                     }
+
+                    // WifiStartResponse and WifiConnectStatus are expected
+                    read(socket)
+                    read(socket)
                 }
             }
             catch (e: java.lang.Exception) {
@@ -196,5 +223,21 @@ class AABluetoothProfileHandler (context: Context) {
             mServerSocket?.close()
 //            hfpServerSocket?.close()
         }
+    }
+
+    private val hexArray = "0123456789ABCDEF".toCharArray()
+    fun ByteArray.toHex(): String {
+        val hexChars = CharArray(size * 2)
+
+        var i = 0
+
+        forEach {
+            val octet = it.toInt()
+            hexChars[i] = hexArray[(octet and 0xF0).ushr(4)]
+            hexChars[i+1] = hexArray[(octet and 0x0F)]
+            i += 2
+        }
+
+        return String(hexChars)
     }
 }
