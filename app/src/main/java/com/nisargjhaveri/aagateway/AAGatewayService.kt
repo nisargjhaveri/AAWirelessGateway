@@ -252,8 +252,12 @@ class AAGatewayService : Service() {
     }
 
     private inner class USBPollThread: Thread() {
+        var mUsbFileDescriptor: ParcelFileDescriptor? = null
+
         fun cancel() {
-            // Don't do anything
+            mUsbFileDescriptor?.runCatching {
+                close()
+            }
         }
 
         override fun run() {
@@ -271,16 +275,14 @@ class AAGatewayService : Service() {
                 }
             }
 
-            var usbFileDescriptor: ParcelFileDescriptor? = null
-
             if (isRunning()) {
-                usbFileDescriptor = mUsbManager.openAccessory(mAccessory)?.also {
+                mUsbFileDescriptor = mUsbManager.openAccessory(mAccessory)?.also {
                     val fd = it.fileDescriptor
                     mPhoneInputStream = FileInputStream(fd)
                     mPhoneOutputStream = FileOutputStream(fd)
                 }
 
-                if (usbFileDescriptor == null || mPhoneInputStream == null || mPhoneOutputStream == null) {
+                if (mUsbFileDescriptor == null || mPhoneInputStream == null || mPhoneOutputStream == null) {
                     stopRunning("Error initializing USB")
                 }
             }
@@ -319,7 +321,7 @@ class AAGatewayService : Service() {
                 }
             }
 
-            usbFileDescriptor?.apply {
+            mUsbFileDescriptor?.apply {
                 try {
                     close()
                 } catch (e: IOException) {
