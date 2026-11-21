@@ -26,23 +26,37 @@ class AAGatewayService : Service() {
 
         private const val DEFAULT_HANDSHAKE_TIMEOUT = 15
         private const val DEFAULT_CONNECTION_TIMEOUT = 60
+
+        const val AA_PORT = 5288
+        private const val CONTROL_PORT = 5287
+
+        // Android Auto frame header: [channel][flags][len_hi][len_lo], followed by a
+        // 4-byte total length when this is the first fragment of a multi-fragment message.
+        private const val FRAME_FLAG_FIRST = 0x01
+        private const val FRAME_FLAG_LAST = 0x02
+        private const val MAX_HEADER_SIZE = 8
+        private const val MAX_PAYLOAD_SIZE = 0xFFFF
+        private const val USB_BUFFER_SIZE = 16384
     }
 
     private var mLogCommunication = false
 
-    private var mRunning = false
+    // These flags and streams are shared between the main thread and the USB/TCP worker
+    // threads, so they must be volatile to make writes visible across threads.
+    @Volatile private var mRunning = false
 
     private var mAccessory: UsbAccessory? = null
 
-    private var mPhoneInputStream: FileInputStream? = null
-    private var mPhoneOutputStream: FileOutputStream? = null
+    @Volatile private var mPhoneInputStream: FileInputStream? = null
+    @Volatile private var mPhoneOutputStream: FileOutputStream? = null
 
-    private var mSocketInputStream: DataInputStream? = null
-    private var mSocketOutputStream: OutputStream? = null
+    @Volatile private var mSocketInputStream: DataInputStream? = null
+    @Volatile private var mSocketOutputStream: OutputStream? = null
 
-    private var mUsbComplete = false
-    private var mLocalComplete = false
+    @Volatile private var mUsbComplete = false
+    @Volatile private var mLocalComplete = false
     private var mHotspotStarted = false
+    @Volatile private var mHotspotIpAddress: String? = null
 
     private var mNativeConnectionFlow = true
     private var mUsbFallback = false
@@ -86,7 +100,9 @@ class AAGatewayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
 
-        if (isRunning()) return START_REDELIVER_INTENT
+        // Never redeliver: after a process restart the USB accessory in the old intent is
+        // most likely gone, and the next USB_ACCESSORY_ATTACHED starts us again anyway.
+        if (isRunning()) return START_NOT_STICKY
 
         updateNotification("Started")
 
@@ -94,7 +110,7 @@ class AAGatewayService : Service() {
         if (mAccessory == null) {
             Log.e(LOG_TAG, "No USB accessory found")
             stopService()
-            return START_REDELIVER_INTENT
+            return START_NOT_STICKY
         }
 
         //Manually start AA.
@@ -108,23 +124,45 @@ class AAGatewayService : Service() {
 
         mNativeConnectionFlow = preferences.getBoolean("native_connection_flow", true)
         mUsbFallback = preferences.getBoolean("usb_fallback", false)
-        mClientHandshakeTimeout = preferences.getInt("client_handshake_timeout", 15)
-        mClientConnectionTimeout = preferences.getInt("client_connection_timeout", 60)
+        mClientHandshakeTimeout = preferences.getInt("client_handshake_timeout", DEFAULT_HANDSHAKE_TIMEOUT)
+        mClientConnectionTimeout = preferences.getInt("client_connection_timeout", DEFAULT_CONNECTION_TIMEOUT)
 
-        val hotspotSsid = preferences.getString("hotspot_ssid", null) ?: ""
+        val hotspotSsid = preferences.getString("hotspot_ssid", null)?.trim() ?: ""
         val hotspotPassphrase = preferences.getString("hotspot_password", null) ?: ""
-        val hotspotBssid = preferences.getString("hotspot_bssid", null)?.ifEmpty { null }
+        val hotspotBssid = preferences.getString("hotspot_bssid", null)?.trim()?.ifEmpty { null }
 
-        clientAddress?.also { address ->
+        val address = clientAddress?.ifEmpty { null }
+        if (address == null) {
+            // Previously the service stayed in the foreground forever in this case.
+            failStart("No client Bluetooth device configured")
+            return START_NOT_STICKY
+        }
+
+        if (mNativeConnectionFlow && (hotspotSsid.isEmpty() || hotspotPassphrase.isEmpty())) {
+            failStart("Hotspot SSID/password not configured")
+            return START_NOT_STICKY
+        }
+
+        run {
             updateNotification("Starting wifi hotspot")
             mWifiHotspotHandler.start(hotspotSsid, hotspotPassphrase, hotspotBssid) { wifiSuccess, wifiHotspotInfo ->
-                if (wifiSuccess) {
+                if (!isRunning()) {
+                    // Service was stopped while the hotspot was coming up
+                    Log.i(LOG_TAG, "Hotspot callback after stop, ignoring")
+                    mHotspotStarted = wifiSuccess
+                    stopService()
+                    return@start
+                }
+
+                if (wifiSuccess && wifiHotspotInfo != null) {
                     mHotspotStarted = true
+                    mHotspotIpAddress = wifiHotspotInfo.ipAddress
 
                     updateNotification("Waiting for wireless client")
 
                     if (mNativeConnectionFlow) {
-                        mAABluetoothProfileHandler.connectDevice(address, mClientHandshakeTimeout * 1000L, wifiHotspotInfo!!) { success ->
+                        // Callback is delivered on the main thread
+                        mAABluetoothProfileHandler.connectDevice(address, mClientHandshakeTimeout * 1000L, wifiHotspotInfo) { success ->
                             onInitialHandshake(success, 0)
                         }
                     }
@@ -138,12 +176,22 @@ class AAGatewayService : Service() {
                 }
                 else {
                     Log.e(LOG_TAG, "Could not start wifi hotspot")
-                    stopService()
+                    mRunning = false
+                    onMainHandlerThreadStopped()
                 }
             }
         }
 
-        return START_REDELIVER_INTENT
+        return START_NOT_STICKY
+    }
+
+    private fun failStart(msg: String) {
+        Log.e(LOG_TAG, msg)
+        mRunning = false
+        // Keep the reason visible to the user, but leave the foreground state
+        updateNotification(msg)
+        stopForeground(false)
+        stopSelf()
     }
 
     private fun onInitialHandshake(success: Boolean, rejectReason: Int) {
@@ -165,11 +213,12 @@ class AAGatewayService : Service() {
     }
 
     private fun onLocalComplete() {
+        // Wireless client found us over TCP, the Bluetooth handshake is not needed anymore
         mAABluetoothProfileHandler.cleanup()
     }
 
     private fun onMainHandlerThreadStopped() {
-        mAABluetoothProfileHandler.cleanup()
+        mAABluetoothProfileHandler.stop()
 
         if (!mLocalComplete && mUsbFallback) {
             mAccessory?.let {
@@ -198,12 +247,12 @@ class AAGatewayService : Service() {
         stopSelf()
     }
 
-    private fun stopRunning(msg: String) {
+    private fun stopRunning(msg: String, notify: Boolean = true) {
         Log.i(LOG_TAG, msg)
 
         if (mRunning) {
             mRunning = false
-            updateNotification("Stopping wireless connection")
+            if (notify) updateNotification("Stopping wireless connection")
         }
 
         mMainHandlerThread.cancel()
@@ -211,13 +260,15 @@ class AAGatewayService : Service() {
 
     private fun isRunning() = mRunning
 
-    override fun onBind(p0: Intent?): IBinder? {
-        TODO("Not yet implemented")
-    }
+    // Not a bound service. TODO() here would crash the app if anything tried to bind.
+    override fun onBind(p0: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        // Must not call startForeground() from onDestroy, so don't update the notification
+        stopRunning("Service onDestroy", notify = false)
+        mAABluetoothProfileHandler.stop()
+        stopHotspot()
         super.onDestroy()
-        stopRunning("Service onDestroy")
     }
 
     private inner class MainHandlerThread: Thread() {
@@ -294,12 +345,17 @@ class AAGatewayService : Service() {
             if (isRunning()) {
                 val phoneInputStream = mPhoneInputStream!!
 
-                val buffer = ByteArray(16384)
+                val buffer = ByteArray(USB_BUFFER_SIZE)
                 while (isRunning()) {
                     try {
                         val len: Int
                         try {
                             len = phoneInputStream.read(buffer)
+                            if (len < 0) {
+                                // EOF: headunit closed the accessory (e.g. unplugged)
+                                throw EOFException("USB accessory closed")
+                            }
+                            if (len == 0) continue
                             if (mLogCommunication) Log.v(LOG_TAG, "USB read: ${buffer.copyOf(len).toHex()}")
                         }
                         catch (e: Exception) {
@@ -308,7 +364,7 @@ class AAGatewayService : Service() {
                         }
 
                         try {
-                            mSocketOutputStream?.write(buffer.copyOf(len))
+                            mSocketOutputStream?.write(buffer, 0, len)
                         }
                         catch (e: Exception) {
                             Log.e(LOG_TAG, "usb main loop - tcp write error: ${e.message}")
@@ -354,14 +410,16 @@ class AAGatewayService : Service() {
             super.run()
 
             try {
-                mServerSocket = ServerSocket(5288, 5).apply {
+                mServerSocket = createServerSocket(AA_PORT).apply {
                     soTimeout = mClientConnectionTimeout * 1000
-                    reuseAddress = true
                 }
 
                 mServerSocket?.let {
                     mSocket = it.accept().apply {
                         soTimeout = 10000
+                        // AA carries many small, latency sensitive messages (touch input,
+                        // audio/video acks). Don't let Nagle's algorithm batch them up.
+                        tcpNoDelay = true
                     }
                 }
 
@@ -410,22 +468,32 @@ class AAGatewayService : Service() {
                 updateNotification("Connected!")
             }
 
-            val buffer = ByteArray(16384)
+            // The frame length field is 16 bit, so a frame can be up to 8 + 65535 bytes.
+            // The previous 16 KiB buffer overflowed (IndexOutOfBounds -> disconnect) on
+            // large encrypted fragments.
+            val buffer = ByteArray(MAX_HEADER_SIZE + MAX_PAYLOAD_SIZE)
             while (isRunning()) {
                 try {
                     var pos = 4
                     val encLen: Int
                     try {
-                        mSocketInputStream?.readFully(buffer, 0, 4)
-                        if (buffer[1].toInt() == 9) //Flag 9 means the header is 8 bytes long (read four more bytes separately)
-                        {
+                        val socketInputStream = mSocketInputStream ?: throw IOException("TCP not connected")
+
+                        socketInputStream.readFully(buffer, 0, 4)
+
+                        // The header carries an extra 4-byte total length only for the first
+                        // fragment of a fragmented message (FIRST set, LAST not set). The old
+                        // check (flags == 9) missed e.g. control (0x0D) or unencrypted (0x01)
+                        // first fragments and desynchronised the stream.
+                        val flags = buffer[1].toInt() and 0xFF
+                        if ((flags and (FRAME_FLAG_FIRST or FRAME_FLAG_LAST)) == FRAME_FLAG_FIRST) {
                             pos += 4
-                            mSocketInputStream?.readFully(buffer, 4, 4)
+                            socketInputStream.readFully(buffer, 4, 4)
                         }
 
                         encLen = ((buffer[2].toInt() and 0xFF) shl 8) or (buffer[3].toInt() and 0xFF)
 
-                        mSocketInputStream?.readFully(buffer, pos, encLen)
+                        socketInputStream.readFully(buffer, pos, encLen)
 
                         if (mLogCommunication) Log.v(LOG_TAG, "TCP read: ${buffer.copyOf(encLen + pos).toHex()}")
                     }
@@ -435,7 +503,8 @@ class AAGatewayService : Service() {
                     }
 
                     try {
-                        mPhoneOutputStream?.write(buffer.copyOf(encLen + pos))
+                        // Write the whole frame in a single USB transfer
+                        mPhoneOutputStream?.write(buffer, 0, encLen + pos)
                     }
                     catch (e: Exception) {
                         Log.e(LOG_TAG, "tcp main loop - usb write error: ${e.message}")
@@ -475,9 +544,8 @@ class AAGatewayService : Service() {
             var readValue = -1
 
             try {
-                mServerSocket = ServerSocket(5287, 5).apply {
+                mServerSocket = createServerSocket(CONTROL_PORT).apply {
                     soTimeout = mClientHandshakeTimeout * 1000
-                    reuseAddress = true
                 }
 
                 mServerSocket?.let {
@@ -506,6 +574,30 @@ class AAGatewayService : Service() {
             Handler(mainLooper).post {
                 onInitialHandshake(success, readValue)
             }
+        }
+    }
+
+    /**
+     * Listen only on the hotspot interface when we know its address, so the AA stream is
+     * not exposed on other networks (e.g. mobile data). Fall back to all interfaces if
+     * binding fails (address detection on some devices is unreliable).
+     */
+    private fun createServerSocket(port: Int): ServerSocket {
+        mHotspotIpAddress?.let { ip ->
+            try {
+                return ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(InetAddress.getByName(ip), port), 5)
+                }
+            }
+            catch (e: IOException) {
+                Log.w(LOG_TAG, "Could not bind port $port to $ip, listening on all interfaces: ${e.message}")
+            }
+        }
+
+        return ServerSocket().apply {
+            reuseAddress = true
+            bind(InetSocketAddress(port), 5)
         }
     }
 

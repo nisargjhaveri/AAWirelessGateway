@@ -97,17 +97,34 @@ class WifiClientHandler(context: Context, activityResultCaller: ActivityResultCa
             disconnect()
 
             // Notify connection failed
-            mConnectCallback?.invoke(false, "Wifi connection failed", null, null)
+            invokeConnectCallback(false, "Wifi connection failed", null, null)
         }
     }
     private val mNetworkCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) NetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO) else NetworkCallback()
+
+    private val mHandler = Handler(Looper.getMainLooper())
+    private var mCallbackRegistered = false
 
     fun onLost(callback: () -> Unit) {
         mLostCallback = callback
     }
 
+    /**
+     * Invokes the connect callback at most once per connect() call. Previously the timeout
+     * handler could report a failure after onUnavailable already did (or even after a
+     * successful connection that was later lost).
+     */
+    private fun invokeConnectCallback(success: Boolean, msg: String?, network: Network?, wifiInfo: WifiInfo?) {
+        val callback = mConnectCallback ?: return
+        mConnectCallback = null
+        mHandler.removeCallbacksAndMessages(null)
+        callback.invoke(success, msg, network, wifiInfo)
+    }
+
     fun connect(ssid: String, passphrase: String, bssid: String?, timeoutMs: Int, callback: (success: Boolean, msg: String?, network: Network?, wifiInfo: WifiInfo?) -> Unit) {
-        if (mIsConnected) {
+        // Registering the same NetworkCallback twice throws, so also clean up a
+        // connection attempt that is still pending.
+        if (mCallbackRegistered || mIsConnected) {
             disconnect()
         }
 
@@ -116,7 +133,15 @@ class WifiClientHandler(context: Context, activityResultCaller: ActivityResultCa
         mConnectCallback = callback
 
         if (!mWifiManager.isWifiEnabled) {
-            mConnectCallback?.invoke(false, "Wifi not enabled", null, null)
+            invokeConnectCallback(false, "Wifi not enabled", null, null)
+            return
+        }
+
+        val bssidMac = try {
+            bssid?.let { MacAddress.fromString(it) }
+        } catch (e: IllegalArgumentException) {
+            // A typo in the BSSID setting used to crash the service
+            invokeConnectCallback(false, "Invalid gateway BSSID: $bssid", null, null)
             return
         }
 
@@ -125,11 +150,11 @@ class WifiClientHandler(context: Context, activityResultCaller: ActivityResultCa
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (bssid != null) {
+            if (bssidMac != null) {
                 mIsSpecificRequest = true
                 val specifier = WifiNetworkSpecifier.Builder()
                     .setSsid(ssid)
-                    .setBssid(MacAddress.fromString(bssid))
+                    .setBssid(bssidMac)
                     .setWpa2Passphrase(passphrase)
                     .build()
 
@@ -183,10 +208,12 @@ class WifiClientHandler(context: Context, activityResultCaller: ActivityResultCa
 
         mIsConnecting = true
         mConnectivityManager.requestNetwork(request.build(), mNetworkCallback, timeoutMs)
+        mCallbackRegistered = true
 
-        Handler(Looper.getMainLooper()).postDelayed({
+        mHandler.postDelayed({
             if (mIsConnecting && !mIsConnected) {
-                mConnectCallback?.invoke(false, "Wifi connection failed", null, null)
+                disconnect()
+                invokeConnectCallback(false, "Wifi connection timed out", null, null)
             }
         }, timeoutMs.toLong())
     }
@@ -196,11 +223,21 @@ class WifiClientHandler(context: Context, activityResultCaller: ActivityResultCa
         mIsConnected = true
 
         // Successfully connected
-        mConnectCallback?.invoke(true, null, network, wifiInfo)
+        invokeConnectCallback(true, null, network, wifiInfo)
     }
 
     fun disconnect() {
-        mConnectivityManager.unregisterNetworkCallback(mNetworkCallback)
+        // unregisterNetworkCallback throws IllegalArgumentException when the callback is
+        // not registered, e.g. when disconnect() is called from onLost and again later.
+        if (mCallbackRegistered) {
+            mCallbackRegistered = false
+            try {
+                mConnectivityManager.unregisterNetworkCallback(mNetworkCallback)
+            } catch (e: IllegalArgumentException) {
+                // Already unregistered
+            }
+        }
+        mHandler.removeCallbacksAndMessages(null)
         mIsConnecting = false
         mIsConnected = false
     }

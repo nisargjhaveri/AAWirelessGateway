@@ -28,6 +28,8 @@ class AAWirelessClientService : Service() {
 
     private var mRunning = false
 
+    private var mWifiClientHandler: WifiClientHandler? = null
+
     override fun onCreate() {
         super.onCreate()
 
@@ -57,7 +59,13 @@ class AAWirelessClientService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
 
-        if (mRunning) return START_STICKY
+        // Not sticky: a restart with a null intent long after the Bluetooth trigger
+        // would try to connect to a gateway that is no longer there.
+        if (mRunning) return START_NOT_STICKY
+
+        // Previously never set, so every repeated ACL_CONNECTED broadcast started a
+        // parallel connection attempt and a second Android Auto launch.
+        mRunning = true
 
         updateNotification("Started")
 
@@ -68,9 +76,9 @@ class AAWirelessClientService : Service() {
         val allowInternet = preferences.getBoolean("gateway_wifi_allow_internet", false)
         val bssid = if (allowInternet) null else preferences.getString("gateway_wifi_bssid", null)
 
-        if (ssid == null || password == null) {
+        if (ssid.isNullOrEmpty() || password.isNullOrEmpty()) {
             stopService("Wifi settings not found")
-            return START_STICKY
+            return START_NOT_STICKY
         }
 
         val connectionBatteryLimit = preferences.getInt("connection_battery_limit", 0)
@@ -89,13 +97,16 @@ class AAWirelessClientService : Service() {
         }
 
         val wifiClientHandler = WifiClientHandler(this, null)
+        mWifiClientHandler = wifiClientHandler
 
         wifiClientHandler.onLost {
             stopService("Wifi connection lost")
         }
 
         updateNotification("Connecting to gateway wifi")
-        wifiClientHandler.connect(ssid, password, bssid, 60000) { success, msg, network, wifiInfo ->
+        wifiClientHandler.connect(ssid, password, bssid?.trim()?.ifEmpty { null }, 60000) { success, msg, network, wifiInfo ->
+            if (!mRunning) return@connect
+
             if (success) {
                 val addressInt = getSystemService(WifiManager::class.java).dhcpInfo.gateway
                 val address = "%d.%d.%d.%d".format(null,
@@ -124,35 +135,41 @@ class AAWirelessClientService : Service() {
             }
         }
 
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun stopService(msg: String) {
+        mRunning = false
         updateNotification(msg)
         stopForeground(false)
         stopSelf()
     }
 
-    override fun onBind(p0: Intent?): IBinder? {
-        TODO("Not yet implemented")
-    }
+    // Not a bound service. TODO() here would crash the app if anything tried to bind.
+    override fun onBind(p0: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        super.onDestroy()
+        // Release the network request, otherwise the callback (and the network) leaks
+        mWifiClientHandler?.disconnect()
+        mWifiClientHandler = null
         mRunning = false
+        super.onDestroy()
     }
 
     private fun connectControlChannel(address: String, network: Network?, connectionRejectionReason: Int, callback: () -> Unit) {
         Thread {
             kotlin.run {
                 try {
-                    val socket = Socket()
-                    network?.bindSocket(socket)
+                    Socket().use { socket ->
+                        network?.bindSocket(socket)
 
-                    socket.connect(InetSocketAddress(address, 5287))
+                        socket.connect(InetSocketAddress(address, 5287), 10_000)
 
-                    socket.getOutputStream().write(connectionRejectionReason)
-                    socket.close()
+                        socket.getOutputStream().apply {
+                            write(connectionRejectionReason)
+                            flush()
+                        }
+                    }
 
                     Handler(mainLooper).post(callback)
                 }

@@ -97,7 +97,9 @@ class SettingsFragment : PreferenceFragmentCompat() {
         findPreference<Preference>("manage_usb_permission")?.apply {
             setOnPreferenceClickListener {
                 AlertDialog.Builder(context).apply {
-                    title = "Manage USB Permission"
+                    // Must be setTitle(): inside this apply block `title = ...` resolved to
+                    // the enclosing Preference's title and renamed the preference instead.
+                    setTitle("Manage USB Permission")
                     setMessage(
                         "You need to make this app an system app by moving it to /system/priv-app " +
                                 "and ensure that MANAGE_USB permission is whitelisted. " +
@@ -117,6 +119,14 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 val length = (it as? EditTextPreference)?.text?.length ?: 0
 
                 if (length > 0) "*".repeat(length) else "Not set"
+            }
+        }
+
+        // Keep the manifest components in sync with the stored preferences, e.g. after the
+        // preferences were restored from a backup or the app was reinstalled.
+        listOf("is_wireless_client", "is_gateway").forEach { key ->
+            findPreference<SwitchPreferenceCompat>(key)?.let {
+                setComponentEnabledForPreference(it, it.isChecked)
             }
         }
 
